@@ -353,8 +353,21 @@ class FlutterTts {
       await _channel.invokeMethod('awaitSynthCompletion', awaitCompletion);
 
   /// [Future] which invokes the platform specific method for speaking
-  Future<dynamic> speak(String text) async =>
-      await _channel.invokeMethod('speak', text);
+  Future<dynamic> speak(String text, String language) async {
+    final Map<String, dynamic> params = {'text': text, 'language': language};
+    return await _channel.invokeMethod('speak', params);
+  }
+
+  /// [Future] which invokes the platform specific method for checking TTS availability
+  Future<bool> checkTTSAvailability() async {
+    try {
+      final bool isAvailable = await _channel.invokeMethod('checkTTSAvailability');
+      return isAvailable;
+    } catch (error) {
+      // Optionally, handle the error. For example, you could rethrow it or log it.
+      throw error;
+    }
+  }
 
   /// [Future] which invokes the platform specific method for pause
   Future<dynamic> pause() async => await _channel.invokeMethod('pause');
@@ -372,10 +385,6 @@ class FlutterTts {
         "text": text,
         "fileName": fileName,
       });
-
-  /// [Future] which invokes the platform specific method for setLanguage
-  Future<dynamic> setLanguage(String language) async =>
-      await _channel.invokeMethod('setLanguage', language);
 
   /// [Future] which invokes the platform specific method for setSpeechRate
   /// Allowed values are in the range from 0.0 (slowest) to 1.0 (fastest)
