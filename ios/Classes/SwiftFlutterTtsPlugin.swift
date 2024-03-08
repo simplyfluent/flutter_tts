@@ -7,7 +7,7 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
   final var iosAudioCategoryOptionsKey = "iosAudioCategoryOptionsKey"
   final var iosAudioModeKey = "iosAudioModeKey"
 
-  let synthesizer = AVSpeechSynthesizer()
+  var synthesizers: [String: AVSpeechSynthesizer] = [:] // Map language codes to synthesizers
   var language: String = AVSpeechSynthesisVoice.currentLanguageCode()
   var rate: Float = AVSpeechUtteranceDefaultSpeechRate
   var languages = Set<String>()
@@ -19,15 +19,24 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
   var autoStopSharedSession: Bool = true
   var speakResult: FlutterResult? = nil
   var synthResult: FlutterResult? = nil
-    
+
 
   var channel = FlutterMethodChannel()
   lazy var audioSession = AVAudioSession.sharedInstance()
   init(channel: FlutterMethodChannel) {
     super.init()
     self.channel = channel
-    synthesizer.delegate = self
     setLanguages()
+    initializeSynthesizers()
+  }
+
+  private func initializeSynthesizers() {
+      // Assuming `languages` is already populated with available language codes
+      for language in languages {
+          let synthesizer = AVSpeechSynthesizer()
+          synthesizer.delegate = self
+          synthesizers[language] = synthesizer
+      }
   }
 
   private func setLanguages() {
@@ -45,8 +54,13 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
   public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
     switch call.method {
     case "speak":
-      let text: String = call.arguments as! String
-      self.speak(text: text, result: result)
+      guard let args = call.arguments as? [String: Any],
+        let text = args["text"] as? String,
+        let language = args["language"] as? String else {
+          result("Flutter arguments are not formatted correctly")
+          return
+      }
+      self.speak(text: text, language: language, result: result)
       break
     case "awaitSpeakCompletion":
       self.awaitSpeakCompletion = call.arguments as! Bool
@@ -133,35 +147,53 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
     }
   }
 
-  private func speak(text: String, result: @escaping FlutterResult) {
-    if (self.synthesizer.isPaused) {
-      if (self.synthesizer.continueSpeaking()) {
-        if self.awaitSpeakCompletion {
-          self.speakResult = result
-        } else {
-          result(1)
-        }
-      } else {
-        result(0)
+  private func speak(text: String, language: String, result: @escaping FlutterResult) {
+      // Check if a synthesizer exists for the specified language. If not, immediately return an error result.
+      guard let selectedSynthesizer = synthesizers[language] else {
+          result("No synthesizer available for the requested language: \(language)")
+          return
       }
-    } else {
-      let utterance = AVSpeechUtterance(string: text)
-      if self.voice != nil {
-        utterance.voice = self.voice!
-      } else {
-        utterance.voice = AVSpeechSynthesisVoice(language: self.language)
-      }
-      utterance.rate = self.rate
-      utterance.volume = self.volume
-      utterance.pitchMultiplier = self.pitch
 
-      self.synthesizer.speak(utterance)
-      if self.awaitSpeakCompletion {
-        self.speakResult = result
-      } else {
-        result(1)
+      // Stop all other synthesizers before proceeding.
+      for (lang, synthesizer) in synthesizers {
+          if lang != language {
+              synthesizer.stopSpeaking(at: .immediate)
+          }
       }
-    }
+
+      // Proceed with the existing logic, using 'selectedSynthesizer' instead of 'self.synthesizer'.
+      if selectedSynthesizer.isPaused {
+          if selectedSynthesizer.continueSpeaking() {
+              if self.awaitSpeakCompletion {
+                  self.speakResult = result
+              } else {
+                  result(1)
+              }
+          } else {
+              result(0)
+          }
+      } else {
+          let utterance = AVSpeechUtterance(string: text)
+          // Try to set the voice based on the specified language; fallback to the default if not available.
+          if let voiceForLanguage = AVSpeechSynthesisVoice(language: language) {
+              utterance.voice = voiceForLanguage
+          } else if let defaultVoice = self.voice {
+              utterance.voice = defaultVoice
+          } else {
+              utterance.voice = AVSpeechSynthesisVoice(language: self.language)
+          }
+
+          utterance.rate = self.rate
+          utterance.volume = self.volume
+          utterance.pitchMultiplier = self.pitch
+
+          selectedSynthesizer.speak(utterance)
+          if self.awaitSpeakCompletion {
+              self.speakResult = result
+          } else {
+              result(1)
+          }
+      }
   }
 
   private func synthesizeToFile(text: String, fileName: String, result: @escaping FlutterResult) {
@@ -230,10 +262,18 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
   }
 
   private func pause(result: FlutterResult) {
-      if (self.synthesizer.pauseSpeaking(at: AVSpeechBoundary.word)) {
-        result(1)
+      var pauseSuccessful = false
+
+      for (_, synthesizer) in synthesizers {
+          if synthesizer.pauseSpeaking(at: .word) {
+              pauseSuccessful = true
+          }
+      }
+
+      if pauseSuccessful {
+          result(1) // Indicate success
       } else {
-        result(0)
+          result(0) // Indicate failure if no synthesizer was paused
       }
   }
 
@@ -301,7 +341,20 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
   }
 
   private func stop() {
-    self.synthesizer.stopSpeaking(at: AVSpeechBoundary.immediate)
+      var stopSuccessful = false
+
+      for (_, synthesizer) in synthesizers {
+          if synthesizer.stopSpeaking(at: .immediate) {
+              stopSuccessful = true
+          }
+      }
+
+      // Assuming `result` is a closure or function parameter that needs to be called with the outcome
+      if stopSuccessful {
+          result(1) // Indicate success
+      } else {
+          result(0) // Indicate failure if no synthesizer was stopped
+      }
   }
 
   private func getLanguages(result: FlutterResult) {
