@@ -373,19 +373,8 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
   }
 
   private func stop() {
-      var stopSuccessful = false
-
       for (_, synthesizer) in synthesizers {
-          if synthesizer.stopSpeaking(at: .immediate) {
-              stopSuccessful = true
-          }
-      }
-
-      // Assuming `result` is a closure or function parameter that needs to be called with the outcome
-      if stopSuccessful {
-          result(1) // Indicate success
-      } else {
-          result(0) // Indicate failure if no synthesizer was stopped
+          synthesizer.stopSpeaking(at: .immediate)
       }
   }
 
