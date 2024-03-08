@@ -90,10 +90,6 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
     case "pause":
       self.pause(result: result)
       break
-    case "setLanguage":
-      let language: String = call.arguments as! String
-      self.setLanguage(language: language, result: result)
-      break
     case "setSpeechRate":
       let rate: Double = call.arguments as! Double
       self.setRate(rate: Float(rate))
@@ -239,83 +235,87 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
   }
 
   private func synthesizeToFile(text: String, fileName: String, result: @escaping FlutterResult) {
-    var output: AVAudioFile?
-    var failed = false
-    let utterance = AVSpeechUtterance(string: text)
-
-    if self.voice != nil {
-      utterance.voice = self.voice!
-    } else {
-      utterance.voice = AVSpeechSynthesisVoice(language: self.language)
-    }
-    utterance.rate = self.rate
-    utterance.volume = self.volume
-    utterance.pitchMultiplier = self.pitch
-
-    if #available(iOS 13.0, *) {
-      self.synthesizer.write(utterance) { (buffer: AVAudioBuffer) in
-        guard let pcmBuffer = buffer as? AVAudioPCMBuffer else {
-            NSLog("unknow buffer type: \(buffer)")
-            failed = true
-            return
-        }
-        print(pcmBuffer.format)
-        if pcmBuffer.frameLength == 0 {
-            // finished
-        } else {
-          // append buffer to file
-          let fileURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!.appendingPathComponent(fileName)
-          NSLog("Saving utterance to file: \(fileURL.absoluteString)")
-
-        if output == nil {
-          do {
-            if #available(iOS 17.0, *) {
-              guard let audioFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: Double(22050), channels: 1, interleaved: false) else {
-                NSLog("Error creating audio format for iOS 17+")
-                failed = true
-                return
-              }
-              output = try AVAudioFile(forWriting: fileURL, settings: audioFormat.settings)
-            } else {
-              output = try AVAudioFile(forWriting: fileURL, settings: pcmBuffer.format.settings, commonFormat: .pcmFormatInt16, interleaved: false)
-            }
-          } catch {
-              NSLog("Error creating AVAudioFile: \(error.localizedDescription)")
-              failed = true
-              return
-          }
-        }
-
-
-          try! output!.write(from: pcmBuffer)
-        }
-      }
-    } else {
-        result("Unsupported iOS version")
-    }
-    if failed {
-        result(0)
-    }
-    if self.awaitSynthCompletion {
-      self.synthResult = result
-    } else {
-      result(1)
-    }
+//     var output: AVAudioFile?
+//     var failed = false
+//     let utterance = AVSpeechUtterance(string: text)
+//
+//     if self.voice != nil {
+//       utterance.voice = self.voice!
+//     } else {
+//       utterance.voice = AVSpeechSynthesisVoice(language: self.language)
+//     }
+//     utterance.rate = self.rate
+//     utterance.volume = self.volume
+//     utterance.pitchMultiplier = self.pitch
+//
+//     if #available(iOS 13.0, *) {
+//       self.synthesizer.write(utterance) { (buffer: AVAudioBuffer) in
+//         guard let pcmBuffer = buffer as? AVAudioPCMBuffer else {
+//             NSLog("unknow buffer type: \(buffer)")
+//             failed = true
+//             return
+//         }
+//         print(pcmBuffer.format)
+//         if pcmBuffer.frameLength == 0 {
+//             // finished
+//         } else {
+//           // append buffer to file
+//           let fileURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!.appendingPathComponent(fileName)
+//           NSLog("Saving utterance to file: \(fileURL.absoluteString)")
+//
+//         if output == nil {
+//           do {
+//             if #available(iOS 17.0, *) {
+//               guard let audioFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: Double(22050), channels: 1, interleaved: false) else {
+//                 NSLog("Error creating audio format for iOS 17+")
+//                 failed = true
+//                 return
+//               }
+//               output = try AVAudioFile(forWriting: fileURL, settings: audioFormat.settings)
+//             } else {
+//               output = try AVAudioFile(forWriting: fileURL, settings: pcmBuffer.format.settings, commonFormat: .pcmFormatInt16, interleaved: false)
+//             }
+//           } catch {
+//               NSLog("Error creating AVAudioFile: \(error.localizedDescription)")
+//               failed = true
+//               return
+//           }
+//         }
+//
+//
+//           try! output!.write(from: pcmBuffer)
+//         }
+//       }
+//     } else {
+//         result("Unsupported iOS version")
+//     }
+//     if failed {
+//         result(0)
+//     }
+//     if self.awaitSynthCompletion {
+//       self.synthResult = result
+//     } else {
+//       result(1)
+//     }
+    result(0)
   }
 
   private func pause(result: FlutterResult) {
-      var pauseSuccessful = false
+      var allPausedSuccessfully = true
 
       for (_, synthesizer) in synthesizers {
-          if synthesizer.pauseSpeaking(at: .word) {
-              pauseSuccessful = true
+          // Attempt to pause each synthesizer.
+          if synthesizer.isSpeaking || synthesizer.isPaused {
+              if !synthesizer.pauseSpeaking(at: .word) {
+                  allPausedSuccessfully = false
+              }
           }
       }
 
-      if pauseSuccessful {
-          result(1) // Indicate success
+      if allPausedSuccessfully {
+          result(1) // Indicate success if all relevant synthesizers were paused.
       } else {
-          result(0) // Indicate failure if no synthesizer was paused
+          result(0) // Indicate failure if at least one relevant synthesizer could not be paused.
       }
   }
 
@@ -437,7 +437,7 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
     if #available(iOS 9.0, *) {
       if let voice = AVSpeechSynthesisVoice.speechVoices().first(where: { $0.name == voice["name"]! && $0.language == voice["locale"]! }) {
         self.voice = voice
-        self.language = voice.language
+//         self.language = voice.language
         result(1)
         return
       }
