@@ -53,6 +53,15 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
 
   public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
     switch call.method {
+    case "checkTTSAvailability":
+      let availability = checkTtsAvailability()
+      if availability.success {
+        result(true)
+      } else {
+        // Use FlutterError to throw an exception back to Flutter with the error message
+        result(FlutterError(code: "UNAVAILABLE", message: availability.message, details: nil))
+      }
+      break
     case "speak":
       guard let args = call.arguments as? [String: Any],
         let text = args["text"] as? String,
@@ -145,6 +154,40 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
     default:
       result(FlutterMethodNotImplemented)
     }
+  }
+
+  func checkTtsAvailability() -> (success: Bool, message: String) {
+      // Check iOS version compatibility
+      if #available(iOS 7.0, *) {
+          // TTS is supported in iOS 7 and above
+      } else {
+          return (false, "TTS is not supported on iOS versions below 7.0")
+      }
+
+      // Verify speech synthesis voices are available
+      let voices = AVSpeechSynthesisVoice.speechVoices()
+      if voices.isEmpty {
+          return (false, "No TTS voices are available. Check if voice data is downloaded.")
+      }
+
+      // Check AVAudioSession availability
+      let audioSession = AVAudioSession.sharedInstance()
+      do {
+          try audioSession.setActive(true)
+          var outputAvailable = false
+          for output in audioSession.currentRoute.outputs where output.portType != AVAudioSession.Port.builtInReceiver && output.portType != AVAudioSession.Port.builtInSpeaker {
+              outputAvailable = true
+              break
+          }
+          if !outputAvailable {
+              return (false, "Audio output seems to be compromised. Please check your device's audio output settings.")
+          }
+      } catch {
+          return (false, "Failed to activate audio session, which might affect TTS functionality.")
+      }
+
+      // If all checks pass
+      return (true, "TTS should be functional.")
   }
 
   private func speak(text: String, language: String, result: @escaping FlutterResult) {
