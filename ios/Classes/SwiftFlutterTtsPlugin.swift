@@ -8,7 +8,6 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
   final var iosAudioModeKey = "iosAudioModeKey"
 
   var synthesizers: [String: AVSpeechSynthesizer] = [:] // Map language codes to synthesizers
-  var language: String = AVSpeechSynthesisVoice.currentLanguageCode()
   var rate: Float = AVSpeechUtteranceDefaultSpeechRate
   var languages = Set<String>()
   var volume: Float = 1.0
@@ -223,7 +222,7 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
           } else if let defaultVoice = self.voice {
               utterance.voice = defaultVoice
           } else {
-              utterance.voice = AVSpeechSynthesisVoice(language: self.language)
+              utterance.voice = AVSpeechSynthesisVoice(language: language)
           }
 
           utterance.rate = self.rate
@@ -318,16 +317,6 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
       } else {
           result(0) // Indicate failure if no synthesizer was paused
       }
-  }
-
-  private func setLanguage(language: String, result: FlutterResult) {
-    if !(self.languages.contains(where: {$0.range(of: language, options: [.caseInsensitive, .anchored]) != nil})) {
-      result(0)
-    } else {
-      self.language = language
-      self.voice = nil
-      result(1)
-    }
   }
 
   private func setRate(rate: Float) {
@@ -453,8 +442,6 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
         return
       }
       result(0)
-    } else {
-      setLanguage(language: voice["name"]!, result: result)
     }
   }
 
