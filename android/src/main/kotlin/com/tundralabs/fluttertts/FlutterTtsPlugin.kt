@@ -15,6 +15,7 @@ import java.io.File
 import java.lang.reflect.Field
 import java.util.*
 
+data class TtsAvailabilityResult(val success: Boolean, val message: String? = null)
 
 /** FlutterTtsPlugin  */
 class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
@@ -186,6 +187,18 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
         handler!!.post { synthResult?.success(success) }
     }
 
+    private fun checkTtsAvailability(): TtsAvailabilityResult {
+        // Example check: Ensure TTS is initialized and a sample language is available
+        if (tts == null || !isTtsInitialized) {
+            return TtsAvailabilityResult(false, "TTS is not initialized.")
+        }
+        val isLanguageAvailable = tts?.isLanguageAvailable(Locale.US) ?: TextToSpeech.LANG_NOT_SUPPORTED
+        if (isLanguageAvailable < TextToSpeech.LANG_AVAILABLE) {
+            return TtsAvailabilityResult(false, "Required language is not available.")
+        }
+        return TtsAvailabilityResult(true)
+    }
+
     private val onInitListener: TextToSpeech.OnInitListener =
         TextToSpeech.OnInitListener { status ->
             if (status == TextToSpeech.SUCCESS) {
@@ -256,11 +269,14 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
         }
         when (call.method) {
             "speak" -> {
-                var text: String = call.arguments.toString()
+                var text: String = call.argument("text")!!
+                var language: String = call.argument("language")!!
+
                 if (pauseText == null) {
                     pauseText = text
                     currentText = pauseText!!
                 }
+
                 if (isPaused) {
                     // Ensure the text hasn't changed
                     if (currentText == text) {
@@ -271,6 +287,7 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
                         lastProgress = 0
                     }
                 }
+
                 if (speaking) {
                     // If TTS is set to queue mode, allow the utterance to be queued up rather than discarded
                     if (queueMode == TextToSpeech.QUEUE_FLUSH) {
@@ -278,8 +295,10 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
                         return
                     }
                 }
-                val b = speak(text)
-                if (!b) {
+
+                val speechSuccess = speak(text, language)
+
+                if (!speechSuccess) {
                     synchronized(this@FlutterTtsPlugin) {
                         val suspendedCall = Runnable { onMethodCall(call, result) }
                         pendingMethodCalls.add(suspendedCall)
@@ -292,6 +311,16 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
                     speakResult = result
                 } else {
                     result.success(1)
+                }
+            }
+
+            "checkTTSAvailability" -> {
+                val availability = checkTtsAvailability()
+                if (availability.success) {
+                    result.success(true)
+                } else {
+                    // Use FlutterError to communicate back to Flutter with the error message
+                    result.error("UNAVAILABLE", availability.message, null)
                 }
             }
 
@@ -586,9 +615,13 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
         result.success(data)
     }
 
-    private fun speak(text: String): Boolean {
+    private fun speak(text: String, language: String) : Boolean {
+        val locale = Locale.forLanguageTag(language)
+        tts?.language = locale
+
         val uuid: String = UUID.randomUUID().toString()
         utterances[uuid] = text
+
         return if (ismServiceConnectionUsable(tts)) {
             if (silencems > 0) {
                 tts!!.playSilentUtterance(
