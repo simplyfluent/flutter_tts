@@ -445,13 +445,6 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
   }
 
   public func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-    if shouldDeactivateAndNotifyOthers(audioSession) && self.autoStopSharedSession {
-      do {
-        try audioSession.setActive(false, options: .notifyOthersOnDeactivation)
-      } catch {
-        print(error)
-      }
-    }
     if self.awaitSpeakCompletion && self.speakResult != nil {
         self.speakResult!(1)
         self.speakResult = nil
