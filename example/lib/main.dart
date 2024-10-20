@@ -130,7 +130,7 @@ class _MyAppState extends State<MyApp> {
 
     if (_newVoiceText != null) {
       if (_newVoiceText!.isNotEmpty) {
-        await flutterTts.speak(_newVoiceText!);
+        await flutterTts.speak(_newVoiceText!, 'en');
       }
     }
   }
