@@ -15,7 +15,7 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
   var voice: AVSpeechSynthesisVoice?
   var awaitSpeakCompletion: Bool = false
   var awaitSynthCompletion: Bool = false
-  var autoStopSharedSession: Bool = true
+  var autoStopSharedSession: Bool = false
   var speakResult: FlutterResult? = nil
   var synthResult: FlutterResult? = nil
 
