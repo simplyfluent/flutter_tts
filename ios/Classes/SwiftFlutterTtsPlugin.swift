@@ -168,13 +168,16 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
       // Check AVAudioSession availability
       let audioSession = AVAudioSession.sharedInstance()
       do {
+          // Set the audio session category and mode before activating
+          try audioSession.setCategory(.playback, mode: .default)
           try audioSession.setActive(true)
+
           let outputAvailable = !audioSession.currentRoute.outputs.isEmpty
           if !outputAvailable {
               return (false, "No audio outputs are available. Please check your device's audio output settings.")
           }
-      } catch {
-          return (false, "Failed to activate audio session, which might affect TTS functionality.")
+      } catch let error as NSError {
+          return (false, "Failed to activate audio session: \(error.localizedDescription)")
       }
 
       // If all checks pass
