@@ -169,13 +169,9 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
       let audioSession = AVAudioSession.sharedInstance()
       do {
           try audioSession.setActive(true)
-          var outputAvailable = false
-          for output in audioSession.currentRoute.outputs where output.portType != AVAudioSession.Port.builtInReceiver && output.portType != AVAudioSession.Port.builtInSpeaker {
-              outputAvailable = true
-              break
-          }
+          let outputAvailable = !audioSession.currentRoute.outputs.isEmpty
           if !outputAvailable {
-              return (false, "Audio output seems to be compromised. Please check your device's audio output settings.")
+              return (false, "No audio outputs are available. Please check your device's audio output settings.")
           }
       } catch {
           return (false, "Failed to activate audio session, which might affect TTS functionality.")
