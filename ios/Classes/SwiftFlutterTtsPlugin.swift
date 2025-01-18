@@ -27,14 +27,53 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
     self.channel = channel
     setLanguages()
     initializeSynthesizers()
+    registerForAppLifecycleNotifications()
   }
 
+  private func registerForAppLifecycleNotifications() {
+      NotificationCenter.default.addObserver(
+          self,
+          selector: #selector(appWillEnterForeground),
+          name: UIApplication.willEnterForegroundNotification,
+          object: nil
+      )
+      NotificationCenter.default.addObserver(
+          self,
+          selector: #selector(appDidEnterBackground),
+          name: UIApplication.didEnterBackgroundNotification,
+          object: nil
+      )
+    }
+
+    @objc private func appWillEnterForeground() {
+      // Reinitialize synthesizers if needed
+      initializeSynthesizers()
+    }
+
+    @objc private func appDidEnterBackground() {
+      pauseSynthesizers()
+    }
+
   private func initializeSynthesizers() {
-      // Assuming `languages` is already populated with available language codes
+      // Reinitialize synthesizers only if they don't already exist
       for language in languages {
+          if synthesizers[language] == nil {
+              let synthesizer = AVSpeechSynthesizer()
+              synthesizer.delegate = self
+              synthesizers[language] = synthesizer
+          }
+      }
+  }
+
+  private func getSynthesizer(for language: String) -> AVSpeechSynthesizer? {
+      if let synthesizer = synthesizers[language] {
+          return synthesizer
+      } else {
+          // Reinitialize if synthesizer doesn't exist
           let synthesizer = AVSpeechSynthesizer()
           synthesizer.delegate = self
           synthesizers[language] = synthesizer
+          return synthesizer
       }
   }
 
