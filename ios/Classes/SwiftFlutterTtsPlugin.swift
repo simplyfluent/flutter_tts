@@ -233,8 +233,6 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
     // Check AVAudioSession availability
     let audioSession = AVAudioSession.sharedInstance()
     do {
-      // Set the audio session category and mode before activating
-      try audioSession.setCategory(.playback, mode: .default)
       try audioSession.setActive(true)
 
       let outputAvailable = !audioSession.currentRoute.outputs.isEmpty
