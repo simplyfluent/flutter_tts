@@ -11,11 +11,12 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
 
   // MARK: - Properties
   var synthesizers: [String: AVSpeechSynthesizer] = [:] // Map language codes to synthesizers
+  var voicesForLanguage: [String: AVSpeechSynthesisVoice] = [:] // Custom voice per language
   var rate: Float = AVSpeechUtteranceDefaultSpeechRate
   var languages = Set<String>()
+  var languageMap: [String: String] = [:] // Maps lowercase to original case
   var volume: Float = 1.0
   var pitch: Float = 1.0
-  var voice: AVSpeechSynthesisVoice?
   var awaitSpeakCompletion: Bool = false
   var awaitSynthCompletion: Bool = false
   var autoStopSharedSession: Bool = false
@@ -84,12 +85,12 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
 
   // MARK: - Synthesizer Management
   private func initializeSynthesizers() {
-    // Populate synthesizers for each available language if not already done
     for language in languages {
       if synthesizers[language] == nil {
         let synthesizer = AVSpeechSynthesizer()
         synthesizer.delegate = self
         synthesizers[language] = synthesizer
+        print("initializeSynthesizers: Created synthesizer for language: \(language)")
       }
     }
   }
@@ -107,9 +108,12 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
   }
 
   private func setLanguages() {
-    // Collect all supported voices/languages on this device
     for voice in AVSpeechSynthesisVoice.speechVoices() {
-      self.languages.insert(voice.language)
+      let lang = voice.language // e.g., "en-US"
+      let langLower = lang.lowercased() // e.g., "en-us"
+      self.languages.insert(langLower)
+      self.languageMap[langLower] = lang
+      print("setLanguages: Mapped \(langLower) to \(lang)")
     }
   }
 
@@ -126,10 +130,11 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
       }
 
     case "speak":
+      print("handle: Received speak call with arguments: \(String(describing: call.arguments))")
       guard let args = call.arguments as? [String: Any],
-            let text = args["text"] as? String,
-            let language = args["language"] as? String else {
-        result("Flutter arguments are not formatted correctly")
+        let text = args["text"] as? String,
+        let language = args["language"] as? String else {
+        result("Invalid arguments for speak")
         return
       }
       self.speak(text: text, language: language, result: result)
@@ -185,8 +190,9 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
       self.getVoices(result: result)
 
     case "setVoice":
+      print("handle: Received setVoice call with arguments: \(String(describing: call.arguments))")
       guard let args = call.arguments as? [String: String] else {
-        result("iOS could not recognize flutter arguments in method: (sendParams)")
+        result("Invalid arguments for setVoice")
         return
       }
       self.setVoice(voice: args, result: result)
@@ -248,60 +254,69 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
   }
 
   private func speak(text: String, language: String, result: @escaping FlutterResult) {
-    // Check if a synthesizer exists for the specified language
-    guard let selectedSynthesizer = synthesizers[language] else {
+    let languageKey = language.lowercased()
+    print("speak: Language passed: \(language), normalized to: \(languageKey)")
+
+    // Look up the synthesizer using the normalized key.
+    guard let selectedSynthesizer = synthesizers[languageKey] else {
+      print("speak: No synthesizer available for languageKey: \(languageKey)")
       result("No synthesizer available for the requested language: \(language)")
       return
     }
 
-    // Stop all other synthesizers before proceeding
+    print("speak: Using synthesizer for languageKey: \(languageKey)")
+
+    // Stop all other synthesizers.
     for (lang, synthesizer) in synthesizers {
-      if lang != language {
+      if lang != languageKey {
         synthesizer.stopSpeaking(at: .immediate)
+        print("speak: Stopped synthesizer for language: \(lang)")
       }
     }
 
-    // If the synthesizer is paused, continue speaking
-    if selectedSynthesizer.isPaused {
-      if selectedSynthesizer.continueSpeaking() {
-        if self.awaitSpeakCompletion {
-          self.speakResult = result
-        } else {
-          result(1)
-        }
-      } else {
-        result(0)
-      }
+    // Ensure the audio session is active.
+    do {
+      try AVAudioSession.sharedInstance().setActive(true)
+    } catch {
+      print("speak: Failed to activate audio session: \(error)")
+    }
+
+    // Create an utterance.
+    let utterance = AVSpeechUtterance(string: text)
+
+    // Set the voice: use a custom voice if available; otherwise, fall back to the default.
+    if let customVoice = self.voicesForLanguage[languageKey] {
+      print("speak: Using custom voice for \(languageKey): \(customVoice.name), locale: \(customVoice.language)")
+      utterance.voice = customVoice
+    } else if let originalLanguage = self.languageMap[languageKey] {
+      print("speak: No custom voice found, using default voice for original language: \(originalLanguage)")
+      utterance.voice = AVSpeechSynthesisVoice(language: originalLanguage)
     } else {
-      // Create an utterance and configure it
-      let utterance = AVSpeechUtterance(string: text)
+      print("speak: No voice available for languageKey: \(languageKey)")
+      result("No voice available for the requested language: \(language)")
+      return
+    }
 
-      // Try to set the voice based on the specified language; fallback if not available.
-      if let voiceForLanguage = AVSpeechSynthesisVoice(language: language) {
-        utterance.voice = voiceForLanguage
-      } else if let defaultVoice = self.voice {
-        utterance.voice = defaultVoice
-      } else {
-        utterance.voice = AVSpeechSynthesisVoice(language: language)
-      }
+    // Configure utterance properties.
+    utterance.rate = self.rate
+    utterance.volume = self.volume
+    utterance.pitchMultiplier = self.pitch
 
-      utterance.rate = self.rate
-      utterance.volume = self.volume
-      utterance.pitchMultiplier = self.pitch
+    // Start speaking.
+    selectedSynthesizer.speak(utterance)
+    print("speak: Speaking utterance with text: \(text), language: \(languageKey), voice: \(utterance.voice?.name ?? "nil")")
 
-      // Start speaking
-      selectedSynthesizer.speak(utterance)
-
-      if self.awaitSpeakCompletion {
-        self.speakResult = result
-      } else {
-        result(1)
-      }
+    // If awaitSpeakCompletion is enabled, store the result callback;
+    // otherwise, immediately return success.
+    if self.awaitSpeakCompletion {
+      self.speakResult = result
+    } else {
+      result(1)
     }
   }
 
   private func synthesizeToFile(text: String, fileName: String, result: @escaping FlutterResult) {
-    // Currently unimplemented. Return 0 or error if you want to indicate it's not supported.
+    // Currently unimplemented. Return 0 to indicate it's not supported.
     result(0)
   }
 
@@ -317,12 +332,7 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
         }
       }
     }
-
-    if allPausedSuccessfully {
-      result(1) // Indicate success
-    } else {
-      result(0) // Indicate failure
-    }
+    result(allPausedSuccessfully ? 1 : 0)
   }
 
   private func stop() {
@@ -337,7 +347,7 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
   }
 
   private func setVolume(volume: Float, result: FlutterResult) {
-    if (volume >= 0.0 && volume <= 1.0) {
+    if volume >= 0.0 && volume <= 1.0 {
       self.volume = volume
       result(1)
     } else {
@@ -347,7 +357,7 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
 
   /// Note the corrected check: use `pitch` in the condition, not `volume`.
   private func setPitch(pitch: Float, result: FlutterResult) {
-    if (pitch >= 0.5 && pitch <= 2.0) {
+    if pitch >= 0.5 && pitch <= 2.0 {
       self.pitch = pitch
       result(1)
     } else {
@@ -399,7 +409,7 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
   }
 
   private func getSpeechRateValidRange(result: FlutterResult) {
-    let validSpeechRateRange: [String:String] = [
+    let validSpeechRateRange: [String: String] = [
       "min": String(AVSpeechUtteranceMinimumSpeechRate),
       "normal": String(AVSpeechUtteranceDefaultSpeechRate),
       "max": String(AVSpeechUtteranceMaximumSpeechRate),
@@ -419,8 +429,8 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
   private func getVoices(result: FlutterResult) {
     if #available(iOS 9.0, *) {
       let voices = NSMutableArray()
-      var voiceDict: [String: String] = [:]
       for voice in AVSpeechSynthesisVoice.speechVoices() {
+        var voiceDict: [String: String] = [:]
         voiceDict["name"] = voice.name
         voiceDict["locale"] = voice.language
         voiceDict["quality"] = voice.quality.stringValue
@@ -437,16 +447,35 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
     }
   }
 
-  private func setVoice(voice: [String:String], result: FlutterResult) {
+  // Updated setVoice to support one voice per language.
+  private func setVoice(voice: [String: String], result: FlutterResult) {
     if #available(iOS 9.0, *) {
+      guard let locale = voice["locale"]?.lowercased(), let name = voice["name"] else {
+        print("setVoice: Missing 'locale' or 'name' in arguments: \(voice)")
+        result(0)
+        return
+      }
+      print("setVoice: Attempting to set voice for locale: \(locale), name: \(name)")
+
+      // Log all available voices for debugging
+      print("setVoice: Available voices:")
+      for avVoice in AVSpeechSynthesisVoice.speechVoices() {
+        print(" - Name: \(avVoice.name), Language: \(avVoice.language)")
+      }
+
       if let matchedVoice = AVSpeechSynthesisVoice.speechVoices().first(where: {
-        $0.name == voice["name"]! && $0.language == voice["locale"]!
+        $0.name == name && $0.language.compare(locale, options: .caseInsensitive) == .orderedSame
       }) {
-        self.voice = matchedVoice
+        voicesForLanguage[locale] = matchedVoice
+        print("setVoice: Successfully set voice for \(locale): \(matchedVoice.name), language: \(matchedVoice.language)")
         result(1)
         return
       }
-      result(0)
+      print("setVoice: No matching voice found for locale: \(locale), name: \(name)")
+      result(0) // Voice not found
+    } else {
+      print("setVoice: Feature not available below iOS 9.0")
+      result(FlutterMethodNotImplemented)
     }
   }
 

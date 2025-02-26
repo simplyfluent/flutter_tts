@@ -42,6 +42,9 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
     private var isPaused: Boolean = false
     private var queueMode: Int = TextToSpeech.QUEUE_FLUSH
 
+    // NEW: Map to hold custom voices per language (keyed by locale string)
+    private val customVoices: MutableMap<String, Voice> = mutableMapOf()
+
     companion object {
         private const val SILENCE_PREFIX = "SIL_"
         private const val SYNTHESIZE_TO_FILE_PREFIX = "STF_"
@@ -196,7 +199,7 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
         if (isLanguageAvailable < TextToSpeech.LANG_AVAILABLE) {
             return TtsAvailabilityResult(false, "Required language is not available.")
         }
-        return TtsAvailabilityResult(true)
+        return TtsAvailabilityResult(true, "")
     }
 
     private val onInitListener: TextToSpeech.OnInitListener =
@@ -486,7 +489,7 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
     }
 
     private fun setEngine(engine: String?, result: Result) {
-        tts = TextToSpeech(context, onInitListener, engine)
+        tts = TextToSpeech(context, onInitListener, googleTtsEngine)
         isTtsInitialized = false
         result.success(1)
     }
@@ -501,11 +504,19 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
         }
     }
 
+    // Updated setVoice to support one custom voice per language.
     private fun setVoice(voice: HashMap<String?, String>, result: Result) {
+        val voiceName = voice["name"]
+        val voiceLocale = voice["locale"]
+        if (voiceName == null || voiceLocale == null) {
+            result.success(0)
+            return
+        }
         for (ttsVoice in tts!!.voices) {
-            if (ttsVoice.name == voice["name"] && ttsVoice.locale
-                    .toLanguageTag() == voice["locale"]
-            ) {
+            if (ttsVoice.name == voiceName && ttsVoice.locale.toLanguageTag() == voiceLocale) {
+                // Save the custom voice for this locale.
+                customVoices[voiceLocale] = ttsVoice
+                // Also set the TTS engine to use this voice.
                 tts!!.voice = ttsVoice
                 result.success(1)
                 return
@@ -615,9 +626,16 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
         result.success(data)
     }
 
-    private fun speak(text: String, language: String) : Boolean {
+    private fun speak(text: String, language: String): Boolean {
         val locale = Locale.forLanguageTag(language)
-        tts?.language = locale
+        // Only set the language if the current voice isn't already set to a voice for this language.
+        // Instead of always setting the language, check if a custom voice was set.
+        val customVoice = customVoices[language]
+        if (customVoice != null) {
+            tts!!.voice = customVoice
+        } else {
+            tts?.language = locale
+        }
 
         val uuid: String = UUID.randomUUID().toString()
         utterances[uuid] = text
@@ -667,10 +685,7 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
 
     private fun invokeMethod(method: String, arguments: Any) {
         handler!!.post {
-            if (methodChannel != null) methodChannel!!.invokeMethod(
-                method,
-                arguments
-            )
+            if (methodChannel != null) methodChannel!!.invokeMethod(method, arguments)
         }
     }
 
