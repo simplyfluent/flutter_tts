@@ -11,11 +11,12 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
 
   // MARK: - Properties
   var synthesizers: [String: AVSpeechSynthesizer] = [:] // Map language codes to synthesizers
+  var voices: [String: AVSpeechSynthesisVoice] = [:] // Map language codes to voices
   var rate: Float = AVSpeechUtteranceDefaultSpeechRate
   var languages = Set<String>()
   var volume: Float = 1.0
   var pitch: Float = 1.0
-  var voice: AVSpeechSynthesisVoice?
+  var defaultVoice: AVSpeechSynthesisVoice?
   var awaitSpeakCompletion: Bool = false
   var awaitSynthCompletion: Bool = false
   var autoStopSharedSession: Bool = false
@@ -184,6 +185,10 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
     case "getVoices":
       self.getVoices(result: result)
 
+    case "getVoicesForLanguage":
+      let language: String = call.arguments as! String
+      self.getVoicesForLanguage(language: language, result: result)
+
     case "setVoice":
       guard let args = call.arguments as? [String: String] else {
         result("iOS could not recognize flutter arguments in method: (sendParams)")
@@ -277,9 +282,11 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
       let utterance = AVSpeechUtterance(string: text)
 
       // Try to set the voice based on the specified language; fallback if not available.
-      if let voiceForLanguage = AVSpeechSynthesisVoice(language: language) {
+      if let selectedVoice = self.voices[language] {
+        utterance.voice = selectedVoice
+      } else if let voiceForLanguage = AVSpeechSynthesisVoice(language: language) {
         utterance.voice = voiceForLanguage
-      } else if let defaultVoice = self.voice {
+      } else if let defaultVoice = self.defaultVoice {
         utterance.voice = defaultVoice
       } else {
         utterance.voice = AVSpeechSynthesisVoice(language: language)
@@ -437,12 +444,72 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
     }
   }
 
+  private func getVoicesForLanguage(language: String, result: FlutterResult) {
+    if #available(iOS 9.0, *) {
+      let voices = NSMutableArray()
+      let languageLower = language.lowercased()
+      let languagePrefix = languageLower.prefix(2) // Get "fr" from "fr-FR"
+      
+      print("iOS getVoicesForLanguage called with: \(language)")
+      print("Looking for voices with language prefix: \(languagePrefix)")
+      
+      for voice in AVSpeechSynthesisVoice.speechVoices() {
+        let voiceLanguage = voice.language.lowercased()
+        let voicePrefix = voiceLanguage.prefix(2)
+        
+        // Match by language prefix (e.g., "fr-FR", "fr-CA" both match "fr")
+        // Or exact match for full language codes
+        let isMatch = voicePrefix == languagePrefix || voiceLanguage == languageLower
+        
+        if isMatch {
+          var voiceDict: [String: String] = [:]
+          voiceDict["name"] = voice.name
+          voiceDict["locale"] = voice.language
+          voiceDict["quality"] = voice.quality.stringValue
+          if #available(iOS 13.0, *) {
+            voiceDict["gender"] = voice.gender.stringValue
+          }
+          voiceDict["identifier"] = voice.identifier
+          voices.add(voiceDict)
+          
+          print("Found matching voice: \(voice.name) (\(voice.language))")
+        }
+      }
+      
+      print("Total voices found for \(language): \(voices.count)")
+      result(voices)
+    } else {
+      // Voice selection is not supported below iOS 9; return empty array
+      result([])
+    }
+  }
+
   private func setVoice(voice: [String:String], result: FlutterResult) {
     if #available(iOS 9.0, *) {
       if let matchedVoice = AVSpeechSynthesisVoice.speechVoices().first(where: {
         $0.name == voice["name"]! && $0.language == voice["locale"]!
       }) {
-        self.voice = matchedVoice
+        let voiceLocale = voice["locale"]!
+        let voicePrefix = String(voiceLocale.lowercased().prefix(2)) // Get "fr" from "fr-CA"
+        
+        // Store the voice for all related language codes
+        // This ensures speak() can find it regardless of which language code is used
+        for (languageCode, synthesizer) in synthesizers {
+          let synthesizerPrefix = String(languageCode.lowercased().prefix(2))
+          if synthesizerPrefix == voicePrefix {
+            self.voices[languageCode] = matchedVoice
+            print("Stored voice \(matchedVoice.name) for language code: \(languageCode)")
+          }
+        }
+        
+        // Also store it under the voice's actual locale
+        self.voices[voiceLocale] = matchedVoice
+        
+        // Also set as default voice if none exists
+        if self.defaultVoice == nil {
+          self.defaultVoice = matchedVoice
+        }
+        
         result(1)
         return
       }

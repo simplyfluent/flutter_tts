@@ -523,6 +523,14 @@ class FlutterTts {
     return voices;
   }
 
+  /// [Future] which invokes the platform specific method for getVoicesForLanguage
+  /// Returns a `List` of `Maps` containing voices for a specific language
+  /// ***iOS and macOS supported only***
+  Future<dynamic> getVoicesForLanguage(String language) async {
+    final voices = await _channel.invokeMethod('getVoicesForLanguage', language);
+    return voices;
+  }
+
   /// [Future] which invokes the platform specific method for isLanguageAvailable
   /// Returns `true` or `false`
   Future<dynamic> isLanguageAvailable(String language) async =>

@@ -410,6 +410,10 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
 
             "getLanguages" -> getLanguages(result)
             "getVoices" -> getVoices(result)
+            "getVoicesForLanguage" -> {
+                val language: String = call.arguments.toString()
+                getVoicesForLanguage(language, result)
+            }
             "getSpeechRateValidRange" -> getSpeechRateValidRange(result)
             "getEngines" -> getEngines(result)
             "getDefaultEngine" -> getDefaultEngine(result)
@@ -551,6 +555,38 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
         }
     }
 
+    private fun getVoicesForLanguage(language: String, result: Result) {
+        val voices = ArrayList<HashMap<String, String>>()
+        try {
+            val targetLocale = Locale.forLanguageTag(language)
+            val languagePrefix = targetLocale.language.lowercase()
+            
+            for (voice in tts!!.voices) {
+                val voiceLanguage = voice.locale.language.lowercase()
+                if (voiceLanguage == languagePrefix) {
+                    val voiceMap = HashMap<String, String>()
+                    voiceMap["name"] = voice.name
+                    voiceMap["locale"] = voice.locale.toLanguageTag()
+                    // Add quality information if available
+                    val quality = voice.quality
+                    when (quality) {
+                        Voice.QUALITY_VERY_HIGH -> voiceMap["quality"] = "Premium"
+                        Voice.QUALITY_HIGH -> voiceMap["quality"] = "Enhanced"
+                        Voice.QUALITY_NORMAL -> voiceMap["quality"] = "Default"
+                        Voice.QUALITY_LOW -> voiceMap["quality"] = "Low"
+                        Voice.QUALITY_VERY_LOW -> voiceMap["quality"] = "Very Low"
+                        else -> voiceMap["quality"] = "Default"
+                    }
+                    voices.add(voiceMap)
+                }
+            }
+            result.success(voices)
+        } catch (e: Exception) {
+            Log.d(tag, "getVoicesForLanguage: " + e.message)
+            result.success(voices) // Return empty list on error
+        }
+    }
+
     private fun getLanguages(result: Result) {
         val locales = ArrayList<String>()
         try {
@@ -617,7 +653,21 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
 
     private fun speak(text: String, language: String) : Boolean {
         val locale = Locale.forLanguageTag(language)
+        
+        // Store the current voice before setting language
+        val currentVoice = tts?.voice
+        
+        // Set the language
         tts?.language = locale
+        
+        // Restore the voice if it was set (setting language can override voice)
+        if (currentVoice != null) {
+            try {
+                tts?.voice = currentVoice
+            } catch (e: Exception) {
+                Log.d(tag, "Failed to restore voice after setting language: ${e.message}")
+            }
+        }
 
         val uuid: String = UUID.randomUUID().toString()
         utterances[uuid] = text
