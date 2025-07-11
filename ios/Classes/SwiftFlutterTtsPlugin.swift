@@ -59,9 +59,9 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
   }
 
   @objc private func appWillEnterForeground() {
-    // Reinitialize synthesizers if needed (only if they don’t exist)
-    // This ensures they're ready for use when the app comes back to the foreground.
-    initializeSynthesizers()
+    // Force reinitialize all synthesizers when app comes back to foreground
+    // This ensures they're properly initialized after potential backgrounding/termination
+    reinitializeSynthesizers()
   }
 
   @objc private func appDidEnterBackground() {
@@ -94,10 +94,26 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
       }
     }
   }
+  
+  private func reinitializeSynthesizers() {
+    // Force re-creation of all synthesizers and their delegates
+    // This ensures they're properly initialized after app lifecycle transitions
+    print("TTS: Reinitializing all synthesizers after app lifecycle change")
+    for language in languages {
+      let synthesizer = AVSpeechSynthesizer()
+      synthesizer.delegate = self
+      synthesizers[language] = synthesizer
+    }
+    print("TTS: Reinitialized \(synthesizers.count) synthesizers")
+  }
 
   private func getSynthesizer(for language: String) -> AVSpeechSynthesizer? {
     // Retrieve an existing synthesizer or create a new one for the specified language
     if let synthesizer = synthesizers[language] {
+      // Ensure the delegate is properly set (may have been cleared during app lifecycle)
+      if synthesizer.delegate !== self {
+        synthesizer.delegate = self
+      }
       return synthesizer
     } else {
       let synthesizer = AVSpeechSynthesizer()
@@ -215,6 +231,10 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
       let audioModes = args[iosAudioModeKey] as? String
       self.setAudioCategory(audioCategory: audioCategory, audioOptions: audioOptions, audioMode: audioModes, result: result)
 
+    case "forceReinitializeSynthesizers":
+      self.reinitializeSynthesizers()
+      result(1)
+
     default:
       result(FlutterMethodNotImplemented)
     }
@@ -253,8 +273,8 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
   }
 
   private func speak(text: String, language: String, result: @escaping FlutterResult) {
-    // Check if a synthesizer exists for the specified language
-    guard let selectedSynthesizer = synthesizers[language] else {
+    // Get a valid synthesizer for the specified language
+    guard let selectedSynthesizer = getSynthesizer(for: language) else {
       result("No synthesizer available for the requested language: \(language)")
       return
     }

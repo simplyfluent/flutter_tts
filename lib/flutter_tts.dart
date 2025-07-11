@@ -482,6 +482,13 @@ class FlutterTts {
   /// [Future] which invokes the platform specific method for stop
   Future<dynamic> stop() async => await _channel.invokeMethod('stop');
 
+  /// [Future] which forces reinitialization of synthesizers
+  /// ***iOS supported only*** - for testing background/foreground behavior
+  Future<dynamic> forceReinitializeSynthesizers() async {
+    if (!Platform.isIOS) return;
+    return await _channel.invokeMethod('forceReinitializeSynthesizers');
+  }
+
   /// [Future] which invokes the platform specific method for getLanguages
   /// Android issues with API 21 & 22
   /// Returns a list of available languages
