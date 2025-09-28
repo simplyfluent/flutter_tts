@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 typedef void ErrorHandler(dynamic message);
+typedef DetailedErrorHandler = void Function(Map<String, dynamic> error);
 typedef ProgressHandler = void Function(
     String text, int start, int end, String word);
 
@@ -338,6 +339,7 @@ class FlutterTts {
   VoidCallback? cancelHandler;
   ProgressHandler? progressHandler;
   ErrorHandler? errorHandler;
+  DetailedErrorHandler? detailedErrorHandler;
 
   FlutterTts() {
     _channel.setMethodCallHandler(platformCallHandler);
@@ -354,14 +356,15 @@ class FlutterTts {
 
   /// [Future] which invokes the platform specific method for speaking
   Future<dynamic> speak(String text, String language) async {
-    final Map<String, dynamic> params = {'text': text, 'language': language};
+    final params = <String, dynamic>{'text': text, 'language': language};
     return await _channel.invokeMethod('speak', params);
   }
 
   /// [Future] which invokes the platform specific method for checking TTS availability
   Future<bool> checkTTSAvailability() async {
     try {
-      final bool isAvailable = await _channel.invokeMethod('checkTTSAvailability');
+      final bool isAvailable =
+          await _channel.invokeMethod('checkTTSAvailability');
       return isAvailable;
     } catch (error) {
       // Optionally, handle the error. For example, you could rethrow it or log it.
@@ -534,7 +537,8 @@ class FlutterTts {
   /// Returns a `List` of `Maps` containing voices for a specific language
   /// ***iOS and macOS supported only***
   Future<dynamic> getVoicesForLanguage(String language) async {
-    final voices = await _channel.invokeMethod('getVoicesForLanguage', language);
+    final voices =
+        await _channel.invokeMethod('getVoicesForLanguage', language);
     return voices;
   }
 
@@ -615,6 +619,10 @@ class FlutterTts {
     errorHandler = handler;
   }
 
+  void setDetailedErrorHandler(DetailedErrorHandler handler) {
+    detailedErrorHandler = handler;
+  }
+
   /// Platform listeners
   Future platformCallHandler(MethodCall call) async {
     switch (call.method) {
@@ -682,6 +690,18 @@ class FlutterTts {
       case "synth.onError":
         if (errorHandler != null) {
           errorHandler!(call.arguments);
+        }
+        break;
+      case "tts.error":
+        if (detailedErrorHandler != null && call.arguments is Map) {
+          final errorMap = Map<String, dynamic>.from(call.arguments as Map);
+          detailedErrorHandler!(errorMap);
+        } else if (errorHandler != null) {
+          // Fallback to legacy error handler
+          final message = call.arguments is Map
+            ? (call.arguments as Map)['message'] ?? call.arguments.toString()
+            : call.arguments.toString();
+          errorHandler!(message);
         }
         break;
       default:

@@ -275,7 +275,15 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
   private func speak(text: String, language: String, result: @escaping FlutterResult) {
     // Get a valid synthesizer for the specified language
     guard let selectedSynthesizer = getSynthesizer(for: language) else {
-      result("No synthesizer available for the requested language: \(language)")
+      let errorMessage = "No synthesizer available for the requested language: \(language)"
+      print("TTS Error: \(errorMessage)")
+      channel.invokeMethod("tts.error", arguments: [
+        "type": "speak_failure",
+        "message": errorMessage,
+        "code": "NO_SYNTHESIZER_AVAILABLE",
+        "language": language
+      ])
+      result(0)
       return
     }
 
@@ -286,44 +294,98 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
       }
     }
 
-    // If the synthesizer is paused, continue speaking
-    if selectedSynthesizer.isPaused {
-      if selectedSynthesizer.continueSpeaking() {
-        if self.awaitSpeakCompletion {
-          self.speakResult = result
+    do {
+      // If the synthesizer is paused, continue speaking
+      if selectedSynthesizer.isPaused {
+        if selectedSynthesizer.continueSpeaking() {
+          print("TTS: Continuing paused speech for language: \(language)")
+          if self.awaitSpeakCompletion {
+            self.speakResult = result
+          } else {
+            result(1)
+          }
         } else {
-          result(1)
+          let errorMessage = "Failed to continue paused speech"
+          print("TTS Error: \(errorMessage)")
+          channel.invokeMethod("tts.error", arguments: [
+            "type": "speak_failure",
+            "message": errorMessage,
+            "code": "CONTINUE_SPEAKING_FAILED",
+            "language": language
+          ])
+          result(0)
         }
       } else {
-        result(0)
+        // Create an utterance and configure it
+        let utterance = AVSpeechUtterance(string: text)
+
+        // Try to set the voice based on the specified language; fallback if not available.
+        var voiceUsed: String = "default"
+        if let selectedVoice = self.voices[language] {
+          utterance.voice = selectedVoice
+          voiceUsed = selectedVoice.name
+        } else if let voiceForLanguage = AVSpeechSynthesisVoice(language: language) {
+          utterance.voice = voiceForLanguage
+          voiceUsed = voiceForLanguage.name
+        } else if let defaultVoice = self.defaultVoice {
+          utterance.voice = defaultVoice
+          voiceUsed = defaultVoice.name
+        } else {
+          utterance.voice = AVSpeechSynthesisVoice(language: language)
+          voiceUsed = "system_default"
+        }
+
+        if utterance.voice == nil {
+          let errorMessage = "No voice available for language: \(language)"
+          print("TTS Error: \(errorMessage)")
+          channel.invokeMethod("tts.error", arguments: [
+            "type": "speak_failure",
+            "message": errorMessage,
+            "code": "NO_VOICE_AVAILABLE",
+            "language": language
+          ])
+          result(0)
+          return
+        }
+
+        utterance.rate = self.rate
+        utterance.volume = self.volume
+        utterance.pitchMultiplier = self.pitch
+
+        // Start speaking with error handling
+        do {
+          selectedSynthesizer.speak(utterance)
+          print("TTS: Started speaking with voice '\(voiceUsed)' for language: \(language)")
+
+          if self.awaitSpeakCompletion {
+            self.speakResult = result
+          } else {
+            result(1)
+          }
+        } catch {
+          let errorMessage = "Failed to start speech synthesis: \(error.localizedDescription)"
+          print("TTS Error: \(errorMessage)")
+          channel.invokeMethod("tts.error", arguments: [
+            "type": "speak_failure",
+            "message": errorMessage,
+            "code": "SPEAK_START_FAILED",
+            "language": language,
+            "voice": voiceUsed
+          ])
+          result(0)
+        }
       }
-    } else {
-      // Create an utterance and configure it
-      let utterance = AVSpeechUtterance(string: text)
-
-      // Try to set the voice based on the specified language; fallback if not available.
-      if let selectedVoice = self.voices[language] {
-        utterance.voice = selectedVoice
-      } else if let voiceForLanguage = AVSpeechSynthesisVoice(language: language) {
-        utterance.voice = voiceForLanguage
-      } else if let defaultVoice = self.defaultVoice {
-        utterance.voice = defaultVoice
-      } else {
-        utterance.voice = AVSpeechSynthesisVoice(language: language)
-      }
-
-      utterance.rate = self.rate
-      utterance.volume = self.volume
-      utterance.pitchMultiplier = self.pitch
-
-      // Start speaking
-      selectedSynthesizer.speak(utterance)
-
-      if self.awaitSpeakCompletion {
-        self.speakResult = result
-      } else {
-        result(1)
-      }
+    } catch {
+      let errorMessage = "Exception in speak method: \(error.localizedDescription)"
+      print("TTS Error: \(errorMessage)")
+      channel.invokeMethod("tts.error", arguments: [
+        "type": "speak_exception",
+        "message": errorMessage,
+        "code": "SPEAK_EXCEPTION",
+        "language": language,
+        "text": text
+      ])
+      result(0)
     }
   }
 
@@ -506,33 +568,95 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
 
   private func setVoice(voice: [String:String], result: FlutterResult) {
     if #available(iOS 9.0, *) {
-      if let matchedVoice = AVSpeechSynthesisVoice.speechVoices().first(where: {
-        $0.name == voice["name"]! && $0.language == voice["locale"]!
-      }) {
-        let voiceLocale = voice["locale"]!
-        let voicePrefix = String(voiceLocale.lowercased().prefix(2)) // Get "fr" from "fr-CA"
-        
-        // Store the voice for all related language codes
-        // This ensures speak() can find it regardless of which language code is used
-        for (languageCode, synthesizer) in synthesizers {
-          let synthesizerPrefix = String(languageCode.lowercased().prefix(2))
-          if synthesizerPrefix == voicePrefix {
-            self.voices[languageCode] = matchedVoice
-            print("Stored voice \(matchedVoice.name) for language code: \(languageCode)")
-          }
-        }
-        
-        // Also store it under the voice's actual locale
-        self.voices[voiceLocale] = matchedVoice
-        
-        // Also set as default voice if none exists
-        if self.defaultVoice == nil {
-          self.defaultVoice = matchedVoice
-        }
-        
-        result(1)
+      guard let requestedName = voice["name"], let requestedLocale = voice["locale"] else {
+        let errorMessage = "Invalid voice parameters: missing name or locale"
+        print("TTS Error: \(errorMessage)")
+        channel.invokeMethod("tts.error", arguments: [
+          "type": "voice_setting_error",
+          "message": errorMessage,
+          "code": "INVALID_VOICE_PARAMS",
+          "requested_voice": voice
+        ])
+        result(0)
         return
       }
+
+      let availableVoices = AVSpeechSynthesisVoice.speechVoices()
+      if availableVoices.isEmpty {
+        let errorMessage = "No voices available from iOS TTS engine"
+        print("TTS Error: \(errorMessage)")
+        channel.invokeMethod("tts.error", arguments: [
+          "type": "voice_setting_error",
+          "message": errorMessage,
+          "code": "NO_VOICES_AVAILABLE"
+        ])
+        result(0)
+        return
+      }
+
+      if let matchedVoice = availableVoices.first(where: {
+        $0.name == requestedName && $0.language == requestedLocale
+      }) {
+        do {
+          let voiceLocale = requestedLocale
+          let voicePrefix = String(voiceLocale.lowercased().prefix(2)) // Get "fr" from "fr-CA"
+
+          // Store the voice for all related language codes
+          // This ensures speak() can find it regardless of which language code is used
+          for (languageCode, synthesizer) in synthesizers {
+            let synthesizerPrefix = String(languageCode.lowercased().prefix(2))
+            if synthesizerPrefix == voicePrefix {
+              self.voices[languageCode] = matchedVoice
+              print("Stored voice \(matchedVoice.name) for language code: \(languageCode)")
+            }
+          }
+
+          // Also store it under the voice's actual locale
+          self.voices[voiceLocale] = matchedVoice
+
+          // Also set as default voice if none exists
+          if self.defaultVoice == nil {
+            self.defaultVoice = matchedVoice
+          }
+
+          print("TTS: Successfully set voice: \(matchedVoice.name) (\(matchedVoice.language))")
+          result(1)
+          return
+        } catch {
+          let errorMessage = "Failed to apply voice: \(error.localizedDescription)"
+          print("TTS Error: \(errorMessage)")
+          channel.invokeMethod("tts.error", arguments: [
+            "type": "voice_setting_error",
+            "message": errorMessage,
+            "code": "VOICE_APPLICATION_FAILED",
+            "requested_voice": voice
+          ])
+          result(0)
+          return
+        }
+      }
+
+      // Voice not found
+      let availableVoiceInfo = availableVoices.map { ["name": $0.name, "locale": $0.language] }
+      let errorMessage = "Requested voice not found: \(requestedName) (\(requestedLocale))"
+      print("TTS Error: \(errorMessage)")
+      print("Available voices: \(availableVoiceInfo)")
+      channel.invokeMethod("tts.error", arguments: [
+        "type": "voice_setting_error",
+        "message": errorMessage,
+        "code": "VOICE_NOT_FOUND",
+        "requested_voice": voice,
+        "available_voices": availableVoiceInfo
+      ])
+      result(0)
+    } else {
+      let errorMessage = "Voice setting not supported on iOS versions below 9.0"
+      print("TTS Error: \(errorMessage)")
+      channel.invokeMethod("tts.error", arguments: [
+        "type": "voice_setting_error",
+        "message": errorMessage,
+        "code": "IOS_VERSION_UNSUPPORTED"
+      ])
       result(0)
     }
   }

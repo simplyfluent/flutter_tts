@@ -240,8 +240,18 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
                     }
                 } catch (e: NullPointerException) {
                     Log.e(tag, "getDefaultLocale: " + e.message)
+                    invokeMethod("tts.error", mapOf(
+                        "type" to "initialization_error",
+                        "message" to "Failed to get default locale: ${e.message}",
+                        "code" to "NULL_POINTER_EXCEPTION"
+                    ))
                 } catch (e: IllegalArgumentException) {
                     Log.e(tag, "getDefaultLocale: " + e.message)
+                    invokeMethod("tts.error", mapOf(
+                        "type" to "initialization_error",
+                        "message" to "Invalid default locale: ${e.message}",
+                        "code" to "ILLEGAL_ARGUMENT_EXCEPTION"
+                    ))
                 }
 
                 // Handle pending method calls (sent while TTS was initializing)
@@ -252,8 +262,26 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
                     }
                     pendingMethodCalls.clear()
                 }
+                invokeMethod("tts.init", isTtsInitialized)
             } else {
-                Log.e(tag, "Failed to initialize TextToSpeech with status: $status")
+                val errorMessage = when (status) {
+                    TextToSpeech.ERROR -> "TTS engine reported an error during initialization"
+                    TextToSpeech.ERROR_INVALID_REQUEST -> "Invalid request during TTS initialization"
+                    TextToSpeech.ERROR_NETWORK -> "Network error during TTS initialization"
+                    TextToSpeech.ERROR_NETWORK_TIMEOUT -> "Network timeout during TTS initialization"
+                    TextToSpeech.ERROR_NOT_INSTALLED_YET -> "TTS engine not installed yet"
+                    TextToSpeech.ERROR_OUTPUT -> "Audio output error during TTS initialization"
+                    TextToSpeech.ERROR_SERVICE -> "TTS service error during initialization"
+                    TextToSpeech.ERROR_SYNTHESIS -> "Speech synthesis error during initialization"
+                    else -> "Unknown TTS initialization error (status: $status)"
+                }
+                Log.e(tag, "Failed to initialize TextToSpeech: $errorMessage")
+                invokeMethod("tts.error", mapOf(
+                    "type" to "initialization_failure",
+                    "message" to errorMessage,
+                    "code" to "TTS_INIT_STATUS_$status"
+                ))
+                invokeMethod("tts.init", false)
             }
         }
 
@@ -506,17 +534,75 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
     }
 
     private fun setVoice(voice: HashMap<String?, String>, result: Result) {
-        for (ttsVoice in tts!!.voices) {
-            if (ttsVoice.name == voice["name"] && ttsVoice.locale
-                    .toLanguageTag() == voice["locale"]
-            ) {
-                tts!!.voice = ttsVoice
-                result.success(1)
+        try {
+            val requestedName = voice["name"]
+            val requestedLocale = voice["locale"]
+
+            if (requestedName.isNullOrEmpty() || requestedLocale.isNullOrEmpty()) {
+                Log.e(tag, "Invalid voice parameters: name=$requestedName, locale=$requestedLocale")
+                invokeMethod("tts.error", mapOf(
+                    "type" to "voice_setting_error",
+                    "message" to "Invalid voice parameters provided",
+                    "code" to "INVALID_VOICE_PARAMS",
+                    "requested_voice" to voice.toString()
+                ))
+                result.success(0)
                 return
             }
+
+            val availableVoices = tts!!.voices
+            if (availableVoices.isNullOrEmpty()) {
+                Log.e(tag, "No voices available from TTS engine")
+                invokeMethod("tts.error", mapOf(
+                    "type" to "voice_setting_error",
+                    "message" to "No voices available from TTS engine",
+                    "code" to "NO_VOICES_AVAILABLE"
+                ))
+                result.success(0)
+                return
+            }
+
+            for (ttsVoice in availableVoices) {
+                if (ttsVoice.name == requestedName && ttsVoice.locale.toLanguageTag() == requestedLocale) {
+                    try {
+                        tts!!.voice = ttsVoice
+                        Log.d(tag, "Successfully set voice: ${ttsVoice.name} (${ttsVoice.locale.toLanguageTag()})")
+                        result.success(1)
+                        return
+                    } catch (e: Exception) {
+                        Log.e(tag, "Failed to set voice ${ttsVoice.name}: ${e.message}")
+                        invokeMethod("tts.error", mapOf(
+                            "type" to "voice_setting_error",
+                            "message" to "Failed to apply voice: ${e.message}",
+                            "code" to "VOICE_APPLICATION_FAILED",
+                            "requested_voice" to voice.toString()
+                        ))
+                        result.success(0)
+                        return
+                    }
+                }
+            }
+
+            // Voice not found
+            Log.w(tag, "Voice not found: $voice. Available voices: ${availableVoices.map { "${it.name} (${it.locale.toLanguageTag()})" }}")
+            invokeMethod("tts.error", mapOf(
+                "type" to "voice_setting_error",
+                "message" to "Requested voice not found",
+                "code" to "VOICE_NOT_FOUND",
+                "requested_voice" to voice.toString(),
+                "available_voices" to availableVoices.map { mapOf("name" to it.name, "locale" to it.locale.toLanguageTag()) }
+            ))
+            result.success(0)
+        } catch (e: Exception) {
+            Log.e(tag, "Exception in setVoice: ${e.message}", e)
+            invokeMethod("tts.error", mapOf(
+                "type" to "voice_setting_exception",
+                "message" to "Exception while setting voice: ${e.message}",
+                "code" to "VOICE_SETTING_EXCEPTION",
+                "requested_voice" to voice.toString()
+            ))
+            result.success(0)
         }
-        Log.d(tag, "Voice name not found: $voice")
-        result.success(0)
     }
 
     private fun setVolume(volume: Float, result: Result) {
@@ -673,17 +759,60 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
         utterances[uuid] = text
 
         return if (ismServiceConnectionUsable(tts)) {
-            if (silencems > 0) {
-                tts!!.playSilentUtterance(
-                    silencems.toLong(),
-                    TextToSpeech.QUEUE_FLUSH,
-                    SILENCE_PREFIX + uuid
-                )
-                tts!!.speak(text, TextToSpeech.QUEUE_ADD, bundle, uuid) == 0
-            } else {
-                tts!!.speak(text, queueMode, bundle, uuid) == 0
+            try {
+                val speakResult = if (silencems > 0) {
+                    tts!!.playSilentUtterance(
+                        silencems.toLong(),
+                        TextToSpeech.QUEUE_FLUSH,
+                        SILENCE_PREFIX + uuid
+                    )
+                    tts!!.speak(text, TextToSpeech.QUEUE_ADD, bundle, uuid)
+                } else {
+                    tts!!.speak(text, queueMode, bundle, uuid)
+                }
+
+                if (speakResult != TextToSpeech.SUCCESS) {
+                    val errorMessage = when (speakResult) {
+                        TextToSpeech.ERROR -> "TTS engine reported an error during speech"
+                        TextToSpeech.ERROR_INVALID_REQUEST -> "Invalid speech request"
+                        TextToSpeech.ERROR_NETWORK -> "Network error during speech"
+                        TextToSpeech.ERROR_NETWORK_TIMEOUT -> "Network timeout during speech"
+                        TextToSpeech.ERROR_NOT_INSTALLED_YET -> "TTS engine not installed"
+                        TextToSpeech.ERROR_OUTPUT -> "Audio output error during speech"
+                        TextToSpeech.ERROR_SERVICE -> "TTS service error"
+                        TextToSpeech.ERROR_SYNTHESIS -> "Speech synthesis error"
+                        else -> "Unknown TTS speech error (code: $speakResult)"
+                    }
+                    Log.e(tag, "TTS speak failed: $errorMessage")
+                    invokeMethod("tts.error", mapOf(
+                        "type" to "speak_failure",
+                        "message" to errorMessage,
+                        "code" to "TTS_SPEAK_ERROR_$speakResult",
+                        "text" to text,
+                        "language" to language
+                    ))
+                    false
+                } else {
+                    true
+                }
+            } catch (e: Exception) {
+                Log.e(tag, "Exception during TTS speak: ${e.message}", e)
+                invokeMethod("tts.error", mapOf(
+                    "type" to "speak_exception",
+                    "message" to "Exception during TTS speak: ${e.message}",
+                    "code" to "TTS_SPEAK_EXCEPTION",
+                    "text" to text,
+                    "language" to language
+                ))
+                false
             }
         } else {
+            Log.e(tag, "TTS service connection not usable, reinitializing")
+            invokeMethod("tts.error", mapOf(
+                "type" to "service_connection_failure",
+                "message" to "TTS service connection lost, attempting to reinitialize",
+                "code" to "TTS_SERVICE_CONNECTION_LOST"
+            ))
             isTtsInitialized = false
             tts = TextToSpeech(context, onInitListener, googleTtsEngine)
             false
