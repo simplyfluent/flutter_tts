@@ -215,12 +215,14 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
                 }
 
                 // Handle pending method calls (sent while TTS was initializing)
-                synchronized(this@FlutterTtsPlugin) {
+                synchronized(pendingMethodCalls) {
                     isTtsInitialized = true
+                    Log.d(tag, "🎤 TTS BREADCRUMB: Processing ${pendingMethodCalls.size} pending method calls")
                     for (call in pendingMethodCalls) {
                         call.run()
                     }
                     pendingMethodCalls.clear()
+                    Log.d(tag, "🎤 TTS BREADCRUMB: All pending method calls processed")
                 }
                 invokeMethod("tts.init", isTtsInitialized)
             } else {
@@ -231,7 +233,9 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
 
     private val firstTimeOnInitListener: TextToSpeech.OnInitListener =
         TextToSpeech.OnInitListener { status ->
+            Log.d(tag, "🎤 TTS BREADCRUMB: firstTimeOnInitListener called with status: $status")
             if (status == TextToSpeech.SUCCESS) {
+                Log.d(tag, "🎤 TTS BREADCRUMB: TTS initialization successful")
                 tts!!.setOnUtteranceProgressListener(utteranceProgressListener)
                 try {
                     val locale: Locale = tts!!.defaultVoice.locale
@@ -286,19 +290,36 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
         }
 
     override fun onMethodCall(call: MethodCall, result: Result) {
-        // If TTS is still loading
-        synchronized(this@FlutterTtsPlugin) {
-            if (!isTtsInitialized) {
-                // Suspend method call until the TTS engine is ready
-                val suspendedCall = Runnable { onMethodCall(call, result) }
-                pendingMethodCalls.add(suspendedCall)
-                return
+        // If TTS is still loading, handle non-blocking
+        if (!isTtsInitialized) {
+            when (call.method) {
+                "speak", "pause", "stop", "setVoice", "setSpeechRate", "setVolume", "setPitch" -> {
+                    // For critical methods, queue them safely without blocking
+                    synchronized(pendingMethodCalls) {
+                        val suspendedCall = Runnable { onMethodCall(call, result) }
+                        pendingMethodCalls.add(suspendedCall)
+                        Log.d(tag, "TTS not ready, queuing method: ${call.method}")
+                    }
+                    return
+                }
+                "checkTTSAvailability" -> {
+                    // Return false immediately if not initialized
+                    result.success(false)
+                    return
+                }
+                else -> {
+                    // For other methods, return appropriate default values
+                    result.success(0)
+                    return
+                }
             }
         }
+        Log.d(tag, "🎤 TTS BREADCRUMB: Processing method call: ${call.method}")
         when (call.method) {
             "speak" -> {
                 var text: String = call.argument("text")!!
                 var language: String = call.argument("language")!!
+                Log.d(tag, "🎤 TTS BREADCRUMB: Speak method called - text: '${text.take(50)}...', language: $language")
 
                 if (pauseText == null) {
                     pauseText = text
@@ -738,29 +759,39 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
     }
 
     private fun speak(text: String, language: String) : Boolean {
+        Log.d(tag, "🎤 TTS BREADCRUMB: speak() called - text length: ${text.length}, language: $language")
+
         val locale = Locale.forLanguageTag(language)
-        
+        Log.d(tag, "🎤 TTS BREADCRUMB: Locale created: $locale")
+
         // Store the current voice before setting language
         val currentVoice = tts?.voice
-        
+        Log.d(tag, "🎤 TTS BREADCRUMB: Current voice: ${currentVoice?.name ?: "null"}")
+
         // Set the language
         tts?.language = locale
-        
+        Log.d(tag, "🎤 TTS BREADCRUMB: Language set to: $locale")
+
         // Restore the voice if it was set (setting language can override voice)
         if (currentVoice != null) {
             try {
                 tts?.voice = currentVoice
+                Log.d(tag, "🎤 TTS BREADCRUMB: Voice restored: ${currentVoice.name}")
             } catch (e: Exception) {
-                Log.d(tag, "Failed to restore voice after setting language: ${e.message}")
+                Log.e(tag, "🎤 TTS BREADCRUMB: Failed to restore voice after setting language: ${e.message}")
             }
         }
 
         val uuid: String = UUID.randomUUID().toString()
         utterances[uuid] = text
+        Log.d(tag, "🎤 TTS BREADCRUMB: Generated utterance UUID: $uuid")
 
-        return if (ismServiceConnectionUsable(tts)) {
+        Log.d(tag, "🎤 TTS BREADCRUMB: Checking service connection...")
+        return if (isServiceConnectionUsableNonBlocking(tts)) {
+            Log.d(tag, "🎤 TTS BREADCRUMB: Service connection OK, attempting to speak")
             try {
                 val speakResult = if (silencems > 0) {
+                    Log.d(tag, "🎤 TTS BREADCRUMB: Playing silence (${silencems}ms) then speaking")
                     tts!!.playSilentUtterance(
                         silencems.toLong(),
                         TextToSpeech.QUEUE_FLUSH,
@@ -768,8 +799,10 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
                     )
                     tts!!.speak(text, TextToSpeech.QUEUE_ADD, bundle, uuid)
                 } else {
+                    Log.d(tag, "🎤 TTS BREADCRUMB: Speaking directly with queue mode: $queueMode")
                     tts!!.speak(text, queueMode, bundle, uuid)
                 }
+                Log.d(tag, "🎤 TTS BREADCRUMB: TTS speak call returned: $speakResult")
 
                 if (speakResult != TextToSpeech.SUCCESS) {
                     val errorMessage = when (speakResult) {
@@ -823,6 +856,37 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
         if (awaitSynthCompletion) synth = false
         if (awaitSpeakCompletion) speaking = false
         tts!!.stop()
+    }
+
+    private fun isServiceConnectionUsableNonBlocking(tts: TextToSpeech?): Boolean {
+        if (tts == null) {
+            Log.e(tag, "TTS instance is null")
+            return false
+        }
+
+        // Quick non-blocking checks first
+        try {
+            // Test if we can get basic properties without reflection
+            val engines = tts.engines
+            if (engines.isNullOrEmpty()) {
+                Log.e(tag, "No TTS engines available")
+                return false
+            }
+
+            // Test if default engine is accessible
+            val defaultEngine = tts.defaultEngine
+            if (defaultEngine.isNullOrEmpty()) {
+                Log.e(tag, "No default TTS engine")
+                return false
+            }
+
+            Log.d(tag, "TTS service connection appears usable (engine: $defaultEngine)")
+            return true
+
+        } catch (e: Exception) {
+            Log.e(tag, "TTS service connection check failed: ${e.message}")
+            return false
+        }
     }
 
     private val maxSpeechInputLength: Int
