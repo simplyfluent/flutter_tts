@@ -188,15 +188,104 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
     }
 
     private fun checkTtsAvailability(): TtsAvailabilityResult {
-        // Example check: Ensure TTS is initialized and a sample language is available
+        Log.d(tag, "🔍 TTS DIAGNOSTIC: Starting comprehensive TTS availability check")
+
+        // Check 1: TTS Instance and Initialization
         if (tts == null || !isTtsInitialized) {
             return TtsAvailabilityResult(false, "TTS is not initialized.")
         }
-        val isLanguageAvailable = tts?.isLanguageAvailable(Locale.US) ?: TextToSpeech.LANG_NOT_SUPPORTED
-        if (isLanguageAvailable < TextToSpeech.LANG_AVAILABLE) {
-            return TtsAvailabilityResult(false, "Required language is not available.")
+
+        // Check 2: Available Engines
+        try {
+            val engines = tts!!.engines
+            Log.d(tag, "🔍 TTS DIAGNOSTIC: Available engines: ${engines.map { it.name }}")
+            if (engines.isNullOrEmpty()) {
+                return TtsAvailabilityResult(false, "No TTS engines available on device.")
+            }
+
+            val defaultEngine = tts!!.defaultEngine
+            Log.d(tag, "🔍 TTS DIAGNOSTIC: Default engine: $defaultEngine")
+            if (defaultEngine.isNullOrEmpty()) {
+                return TtsAvailabilityResult(false, "No default TTS engine configured.")
+            }
+
+            // Check if the default engine is actually available
+            val engineAvailable = engines.any { it.name == defaultEngine }
+            if (!engineAvailable) {
+                return TtsAvailabilityResult(false, "Default TTS engine '$defaultEngine' is not available. Available engines: ${engines.map { it.name }}")
+            }
+        } catch (e: Exception) {
+            Log.e(tag, "🔍 TTS DIAGNOSTIC: Error checking engines: ${e.message}")
+            return TtsAvailabilityResult(false, "Error accessing TTS engines: ${e.message}")
         }
-        return TtsAvailabilityResult(true)
+
+        // Check 3: Voice Data Availability
+        try {
+            val voices = tts!!.voices
+            Log.d(tag, "🔍 TTS DIAGNOSTIC: Total voices available: ${voices?.size ?: 0}")
+            if (voices.isNullOrEmpty()) {
+                return TtsAvailabilityResult(false, "No TTS voices available. Voice data may be missing or corrupted.")
+            }
+
+            // Check for basic English voice
+            val englishVoices = voices.filter { it.locale.language.lowercase() == "en" }
+            Log.d(tag, "🔍 TTS DIAGNOSTIC: English voices: ${englishVoices.size}")
+            if (englishVoices.isEmpty()) {
+                return TtsAvailabilityResult(false, "No English voices available. TTS voice data may be incomplete.")
+            }
+        } catch (e: Exception) {
+            Log.e(tag, "🔍 TTS DIAGNOSTIC: Error checking voices: ${e.message}")
+            return TtsAvailabilityResult(false, "Error accessing TTS voices: ${e.message}")
+        }
+
+        // Check 4: Language Support
+        val isLanguageAvailable = tts?.isLanguageAvailable(Locale.US) ?: TextToSpeech.LANG_NOT_SUPPORTED
+        Log.d(tag, "🔍 TTS DIAGNOSTIC: US English availability: $isLanguageAvailable")
+
+        when (isLanguageAvailable) {
+            TextToSpeech.LANG_MISSING_DATA -> {
+                return TtsAvailabilityResult(false, "TTS language data is missing. Voice data needs to be downloaded.")
+            }
+            TextToSpeech.LANG_NOT_SUPPORTED -> {
+                return TtsAvailabilityResult(false, "US English is not supported by the TTS engine.")
+            }
+            TextToSpeech.LANG_COUNTRY_VAR_AVAILABLE,
+            TextToSpeech.LANG_COUNTRY_AVAILABLE,
+            TextToSpeech.LANG_AVAILABLE -> {
+                Log.d(tag, "🔍 TTS DIAGNOSTIC: Language availability check passed")
+            }
+            else -> {
+                return TtsAvailabilityResult(false, "Unknown language availability status: $isLanguageAvailable")
+            }
+        }
+
+        // Check 5: Test Speech Synthesis
+        try {
+            Log.d(tag, "🔍 TTS DIAGNOSTIC: Testing speech synthesis capability")
+            // Don't actually speak, just test if the method would succeed
+            val testResult = tts!!.speak("", TextToSpeech.QUEUE_FLUSH, Bundle(), "diagnostic_test")
+            Log.d(tag, "🔍 TTS DIAGNOSTIC: Test synthesis result: $testResult")
+
+            if (testResult != TextToSpeech.SUCCESS) {
+                val errorMsg = when (testResult) {
+                    TextToSpeech.ERROR -> "TTS engine reported an error"
+                    TextToSpeech.ERROR_SERVICE -> "TTS service is not available"
+                    TextToSpeech.ERROR_INVALID_REQUEST -> "Invalid TTS request"
+                    TextToSpeech.ERROR_NETWORK -> "TTS network error"
+                    TextToSpeech.ERROR_NOT_INSTALLED_YET -> "TTS engine not fully installed"
+                    TextToSpeech.ERROR_OUTPUT -> "TTS audio output error"
+                    TextToSpeech.ERROR_SYNTHESIS -> "TTS synthesis error"
+                    else -> "Unknown TTS error (code: $testResult)"
+                }
+                return TtsAvailabilityResult(false, "TTS synthesis test failed: $errorMsg")
+            }
+        } catch (e: Exception) {
+            Log.e(tag, "🔍 TTS DIAGNOSTIC: Speech synthesis test failed: ${e.message}")
+            return TtsAvailabilityResult(false, "Speech synthesis test failed: ${e.message}")
+        }
+
+        Log.d(tag, "🔍 TTS DIAGNOSTIC: All checks passed - TTS should be functional")
+        return TtsAvailabilityResult(true, "TTS is fully functional")
     }
 
     private val onInitListener: TextToSpeech.OnInitListener =
@@ -432,6 +521,10 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
             "setEngine" -> {
                 val engine: String = call.arguments.toString()
                 setEngine(engine, result)
+            }
+
+            "tryFallbackEngines" -> {
+                tryFallbackEngines(result)
             }
 
             "setSpeechRate" -> {
@@ -941,5 +1034,72 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
             }
         }
         return isBindConnection
+    }
+
+    private fun tryFallbackEngines(result: Result) {
+        Log.d(tag, "🔄 TTS FALLBACK: Attempting to switch to fallback TTS engines")
+
+        try {
+            val availableEngines = tts?.engines ?: emptyList()
+            Log.d(tag, "🔄 TTS FALLBACK: Available engines: ${availableEngines.map { it.name }}")
+
+            val currentEngine = tts?.defaultEngine
+            Log.d(tag, "🔄 TTS FALLBACK: Current engine: $currentEngine")
+
+            // List of engines to try in order of preference
+            val preferredEngines = listOf(
+                "com.google.android.tts",           // Google TTS
+                "com.samsung.SMT",                  // Samsung TTS
+                "com.ivona.tts",                    // Amazon Ivona
+                "es.codefactory.miniTTS",           // eSpeak TTS
+                "com.cereproc.cerevoice.service",   // CereProc
+                "com.acapelagroup.android.tts",     // Acapela TTS
+                "com.baidu.dueros.canary"           // Baidu TTS
+            )
+
+            // Find engines that are available but not the current one
+            val fallbackEngines = preferredEngines.filter { preferredEngine ->
+                availableEngines.any { it.name == preferredEngine } && preferredEngine != currentEngine
+            }
+
+            if (fallbackEngines.isEmpty()) {
+                Log.w(tag, "🔄 TTS FALLBACK: No suitable fallback engines found")
+                result.error("NO_FALLBACK", "No alternative TTS engines available", mapOf(
+                    "current_engine" to currentEngine,
+                    "available_engines" to availableEngines.map { it.name }
+                ))
+                return
+            }
+
+            // Try the first available fallback engine
+            val fallbackEngine = fallbackEngines.first()
+            Log.d(tag, "🔄 TTS FALLBACK: Switching to engine: $fallbackEngine")
+
+            // Initialize with the fallback engine
+            isTtsInitialized = false
+            tts?.shutdown()
+            tts = TextToSpeech(context, { status ->
+                Log.d(tag, "🔄 TTS FALLBACK: Fallback engine initialization status: $status")
+                if (status == TextToSpeech.SUCCESS) {
+                    Log.d(tag, "🔄 TTS FALLBACK: Successfully switched to $fallbackEngine")
+                    isTtsInitialized = true
+                    result.success(mapOf(
+                        "success" to true,
+                        "engine" to fallbackEngine,
+                        "previous_engine" to currentEngine
+                    ))
+                } else {
+                    Log.e(tag, "🔄 TTS FALLBACK: Failed to initialize $fallbackEngine")
+                    result.error("FALLBACK_FAILED", "Failed to initialize fallback engine: $fallbackEngine", mapOf(
+                        "status" to status,
+                        "engine" to fallbackEngine
+                    ))
+                }
+            }, fallbackEngine)
+
+        } catch (e: Exception) {
+            Log.e(tag, "🔄 TTS FALLBACK: Exception during fallback: ${e.message}", e)
+            result.error("FALLBACK_EXCEPTION", "Exception during engine fallback: ${e.message}", null)
+        }
     }
 }
