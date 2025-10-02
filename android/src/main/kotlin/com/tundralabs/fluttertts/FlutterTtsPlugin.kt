@@ -540,19 +540,18 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
         // First method call from Flutter - this confirms Flutter is ready to receive messages
         if (!isMethodChannelReady) {
             isMethodChannelReady = true
-            // Post the flush to happen AFTER this method call completes
-            // This is critical because we can't send messages TO Flutter while processing a method call FROM Flutter
-            handler?.post {
-                synchronized(bufferedDiagnostics) {
-                    if (bufferedDiagnostics.isNotEmpty()) {
-                        Log.d(tag, "Flutter confirmed ready, flushing ${bufferedDiagnostics.size} buffered diagnostics")
-                        bufferedDiagnostics.forEach { diagnostic ->
-                            invokeMethod("tts.diagnostic", diagnostic)
-                        }
-                        bufferedDiagnostics.clear()
-                    } else {
-                        Log.d(tag, "Flutter confirmed ready, no buffered diagnostics")
+            synchronized(bufferedDiagnostics) {
+                if (bufferedDiagnostics.isNotEmpty()) {
+                    Log.d(tag, "Flutter confirmed ready via first method call (${call.method}), flushing ${bufferedDiagnostics.size} buffered diagnostics")
+                    // Send diagnostics directly without posting - we're already on the right thread
+                    bufferedDiagnostics.forEach { diagnostic ->
+                        // Call methodChannel.invokeMethod directly instead of using invokeMethod helper
+                        // to avoid the handler.post wrapper which can cause timing issues
+                        methodChannel?.invokeMethod("tts.diagnostic", diagnostic)
                     }
+                    bufferedDiagnostics.clear()
+                } else {
+                    Log.d(tag, "Flutter confirmed ready via first method call (${call.method}), no buffered diagnostics")
                 }
             }
         }
