@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 
 typedef void ErrorHandler(dynamic message);
 typedef DetailedErrorHandler = void Function(Map<String, dynamic> error);
+typedef DiagnosticHandler = void Function(Map<String, dynamic> diagnostic);
 typedef ProgressHandler = void Function(
     String text, int start, int end, String word);
 
@@ -340,6 +341,7 @@ class FlutterTts {
   ProgressHandler? progressHandler;
   ErrorHandler? errorHandler;
   DetailedErrorHandler? detailedErrorHandler;
+  DiagnosticHandler? diagnosticHandler;
 
   FlutterTts() {
     _channel.setMethodCallHandler(platformCallHandler);
@@ -623,6 +625,10 @@ class FlutterTts {
     detailedErrorHandler = handler;
   }
 
+  void setDiagnosticHandler(DiagnosticHandler handler) {
+    diagnosticHandler = handler;
+  }
+
   /// Platform listeners
   Future platformCallHandler(MethodCall call) async {
     switch (call.method) {
@@ -702,6 +708,12 @@ class FlutterTts {
             ? (call.arguments as Map)['message'] ?? call.arguments.toString()
             : call.arguments.toString();
           errorHandler!(message);
+        }
+        break;
+      case "tts.diagnostic":
+        if (diagnosticHandler != null && call.arguments is Map) {
+          final diagnosticMap = Map<String, dynamic>.from(call.arguments as Map);
+          diagnosticHandler!(diagnosticMap);
         }
         break;
       default:

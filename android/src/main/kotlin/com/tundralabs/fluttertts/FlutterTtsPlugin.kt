@@ -187,8 +187,28 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
         handler!!.post { synthResult?.success(success) }
     }
 
+    private fun logDiagnostic(level: String, message: String, data: Map<String, Any?>? = null) {
+        // Log to logcat
+        when (level) {
+            "ERROR" -> Log.e(tag, message)
+            "WARN" -> Log.w(tag, message)
+            else -> Log.d(tag, message)
+        }
+
+        // Send to Dart for Firestore logging
+        val diagnosticData = mutableMapOf<String, Any?>(
+            "level" to level,
+            "message" to message,
+            "timestamp" to System.currentTimeMillis()
+        )
+        if (data != null) {
+            diagnosticData["data"] = data
+        }
+        invokeMethod("tts.diagnostic", diagnosticData)
+    }
+
     private fun checkTtsAvailability(): TtsAvailabilityResult {
-        Log.d(tag, "🔍 TTS DIAGNOSTIC: Starting comprehensive TTS availability check")
+        logDiagnostic("INFO", "🔍 TTS DIAGNOSTIC: Starting comprehensive TTS availability check")
 
         // Check 1: TTS Instance and Initialization
         if (tts == null || !isTtsInitialized) {
@@ -198,13 +218,15 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
         // Check 2: Available Engines
         try {
             val engines = tts!!.engines
-            Log.d(tag, "🔍 TTS DIAGNOSTIC: Available engines: ${engines.map { it.name }}")
+            logDiagnostic("INFO", "🔍 TTS DIAGNOSTIC: Available engines: ${engines.map { it.name }}",
+                mapOf("engines" to engines.map { it.name }))
             if (engines.isNullOrEmpty()) {
                 return TtsAvailabilityResult(false, "No TTS engines available on device.")
             }
 
             val defaultEngine = tts!!.defaultEngine
-            Log.d(tag, "🔍 TTS DIAGNOSTIC: Default engine: $defaultEngine")
+            logDiagnostic("INFO", "🔍 TTS DIAGNOSTIC: Default engine: $defaultEngine",
+                mapOf("defaultEngine" to defaultEngine))
             if (defaultEngine.isNullOrEmpty()) {
                 return TtsAvailabilityResult(false, "No default TTS engine configured.")
             }
@@ -215,32 +237,37 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
                 return TtsAvailabilityResult(false, "Default TTS engine '$defaultEngine' is not available. Available engines: ${engines.map { it.name }}")
             }
         } catch (e: Exception) {
-            Log.e(tag, "🔍 TTS DIAGNOSTIC: Error checking engines: ${e.message}")
+            logDiagnostic("ERROR", "🔍 TTS DIAGNOSTIC: Error checking engines: ${e.message}",
+                mapOf("error" to e.message))
             return TtsAvailabilityResult(false, "Error accessing TTS engines: ${e.message}")
         }
 
         // Check 3: Voice Data Availability
         try {
             val voices = tts!!.voices
-            Log.d(tag, "🔍 TTS DIAGNOSTIC: Total voices available: ${voices?.size ?: 0}")
+            logDiagnostic("INFO", "🔍 TTS DIAGNOSTIC: Total voices available: ${voices?.size ?: 0}",
+                mapOf("voiceCount" to (voices?.size ?: 0)))
             if (voices.isNullOrEmpty()) {
                 return TtsAvailabilityResult(false, "No TTS voices available. Voice data may be missing or corrupted.")
             }
 
             // Check for basic English voice
             val englishVoices = voices.filter { it.locale.language.lowercase() == "en" }
-            Log.d(tag, "🔍 TTS DIAGNOSTIC: English voices: ${englishVoices.size}")
+            logDiagnostic("INFO", "🔍 TTS DIAGNOSTIC: English voices: ${englishVoices.size}",
+                mapOf("englishVoiceCount" to englishVoices.size))
             if (englishVoices.isEmpty()) {
                 return TtsAvailabilityResult(false, "No English voices available. TTS voice data may be incomplete.")
             }
         } catch (e: Exception) {
-            Log.e(tag, "🔍 TTS DIAGNOSTIC: Error checking voices: ${e.message}")
+            logDiagnostic("ERROR", "🔍 TTS DIAGNOSTIC: Error checking voices: ${e.message}",
+                mapOf("error" to e.message))
             return TtsAvailabilityResult(false, "Error accessing TTS voices: ${e.message}")
         }
 
         // Check 4: Language Support
         val isLanguageAvailable = tts?.isLanguageAvailable(Locale.US) ?: TextToSpeech.LANG_NOT_SUPPORTED
-        Log.d(tag, "🔍 TTS DIAGNOSTIC: US English availability: $isLanguageAvailable")
+        logDiagnostic("INFO", "🔍 TTS DIAGNOSTIC: US English availability: $isLanguageAvailable",
+            mapOf("languageAvailability" to isLanguageAvailable))
 
         when (isLanguageAvailable) {
             TextToSpeech.LANG_MISSING_DATA -> {
@@ -252,7 +279,7 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
             TextToSpeech.LANG_COUNTRY_VAR_AVAILABLE,
             TextToSpeech.LANG_COUNTRY_AVAILABLE,
             TextToSpeech.LANG_AVAILABLE -> {
-                Log.d(tag, "🔍 TTS DIAGNOSTIC: Language availability check passed")
+                logDiagnostic("INFO", "🔍 TTS DIAGNOSTIC: Language availability check passed")
             }
             else -> {
                 return TtsAvailabilityResult(false, "Unknown language availability status: $isLanguageAvailable")
@@ -261,10 +288,11 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
 
         // Check 5: Test Speech Synthesis
         try {
-            Log.d(tag, "🔍 TTS DIAGNOSTIC: Testing speech synthesis capability")
+            logDiagnostic("INFO", "🔍 TTS DIAGNOSTIC: Testing speech synthesis capability")
             // Don't actually speak, just test if the method would succeed
             val testResult = tts!!.speak("", TextToSpeech.QUEUE_FLUSH, Bundle(), "diagnostic_test")
-            Log.d(tag, "🔍 TTS DIAGNOSTIC: Test synthesis result: $testResult")
+            logDiagnostic("INFO", "🔍 TTS DIAGNOSTIC: Test synthesis result: $testResult",
+                mapOf("testResult" to testResult))
 
             if (testResult != TextToSpeech.SUCCESS) {
                 val errorMsg = when (testResult) {
@@ -280,11 +308,12 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
                 return TtsAvailabilityResult(false, "TTS synthesis test failed: $errorMsg")
             }
         } catch (e: Exception) {
-            Log.e(tag, "🔍 TTS DIAGNOSTIC: Speech synthesis test failed: ${e.message}")
+            logDiagnostic("ERROR", "🔍 TTS DIAGNOSTIC: Speech synthesis test failed: ${e.message}",
+                mapOf("error" to e.message))
             return TtsAvailabilityResult(false, "Speech synthesis test failed: ${e.message}")
         }
 
-        Log.d(tag, "🔍 TTS DIAGNOSTIC: All checks passed - TTS should be functional")
+        logDiagnostic("INFO", "🔍 TTS DIAGNOSTIC: All checks passed - TTS should be functional")
         return TtsAvailabilityResult(true, "TTS is fully functional")
     }
 
@@ -852,39 +881,42 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
     }
 
     private fun speak(text: String, language: String) : Boolean {
-        Log.d(tag, "🎤 TTS BREADCRUMB: speak() called - text length: ${text.length}, language: $language")
+        logDiagnostic("DEBUG", "speak() called", mapOf(
+            "textLength" to text.length,
+            "language" to language
+        ))
 
         val locale = Locale.forLanguageTag(language)
-        Log.d(tag, "🎤 TTS BREADCRUMB: Locale created: $locale")
+        logDiagnostic("DEBUG", "Locale created", mapOf("locale" to locale.toString()))
 
         // Store the current voice before setting language
         val currentVoice = tts?.voice
-        Log.d(tag, "🎤 TTS BREADCRUMB: Current voice: ${currentVoice?.name ?: "null"}")
+        logDiagnostic("DEBUG", "Current voice", mapOf("voice" to (currentVoice?.name ?: "null")))
 
         // Set the language
         tts?.language = locale
-        Log.d(tag, "🎤 TTS BREADCRUMB: Language set to: $locale")
+        logDiagnostic("DEBUG", "Language set", mapOf("locale" to locale.toString()))
 
         // Restore the voice if it was set (setting language can override voice)
         if (currentVoice != null) {
             try {
                 tts?.voice = currentVoice
-                Log.d(tag, "🎤 TTS BREADCRUMB: Voice restored: ${currentVoice.name}")
+                logDiagnostic("DEBUG", "Voice restored", mapOf("voice" to currentVoice.name))
             } catch (e: Exception) {
-                Log.e(tag, "🎤 TTS BREADCRUMB: Failed to restore voice after setting language: ${e.message}")
+                logDiagnostic("ERROR", "Failed to restore voice after setting language", mapOf("error" to e.message))
             }
         }
 
         val uuid: String = UUID.randomUUID().toString()
         utterances[uuid] = text
-        Log.d(tag, "🎤 TTS BREADCRUMB: Generated utterance UUID: $uuid")
+        logDiagnostic("DEBUG", "Generated utterance UUID", mapOf("uuid" to uuid))
 
-        Log.d(tag, "🎤 TTS BREADCRUMB: Checking service connection...")
+        logDiagnostic("DEBUG", "Checking service connection")
         return if (isServiceConnectionUsableNonBlocking(tts)) {
-            Log.d(tag, "🎤 TTS BREADCRUMB: Service connection OK, attempting to speak")
+            logDiagnostic("DEBUG", "Service connection OK, attempting to speak")
             try {
                 val speakResult = if (silencems > 0) {
-                    Log.d(tag, "🎤 TTS BREADCRUMB: Playing silence (${silencems}ms) then speaking")
+                    logDiagnostic("DEBUG", "Playing silence then speaking", mapOf("silenceMs" to silencems))
                     tts!!.playSilentUtterance(
                         silencems.toLong(),
                         TextToSpeech.QUEUE_FLUSH,
@@ -892,10 +924,10 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
                     )
                     tts!!.speak(text, TextToSpeech.QUEUE_ADD, bundle, uuid)
                 } else {
-                    Log.d(tag, "🎤 TTS BREADCRUMB: Speaking directly with queue mode: $queueMode")
+                    logDiagnostic("DEBUG", "Speaking directly", mapOf("queueMode" to queueMode))
                     tts!!.speak(text, queueMode, bundle, uuid)
                 }
-                Log.d(tag, "🎤 TTS BREADCRUMB: TTS speak call returned: $speakResult")
+                logDiagnostic("DEBUG", "TTS speak call returned", mapOf("result" to speakResult))
 
                 if (speakResult != TextToSpeech.SUCCESS) {
                     val errorMessage = when (speakResult) {

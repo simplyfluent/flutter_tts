@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:io' show Platform;
-import 'package:flutter/foundation.dart' show kIsWeb;
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 
@@ -185,7 +185,7 @@ class _MyAppState extends State<MyApp> {
   void changedLanguageDropDownItem(String? selectedType) {
     setState(() {
       language = selectedType;
-      flutterTts.setLanguage(language!);
+//      flutterTts.setLanguage(language!);
       if (isAndroid) {
         flutterTts
             .isLanguageInstalled(language!)
