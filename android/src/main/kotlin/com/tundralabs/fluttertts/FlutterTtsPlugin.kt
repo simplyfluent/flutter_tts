@@ -13,6 +13,7 @@ import io.flutter.plugin.common.MethodChannel.MethodCallHandler
 import io.flutter.plugin.common.MethodChannel.Result
 import java.io.File
 import java.lang.reflect.Field
+import java.text.SimpleDateFormat
 import java.util.*
 
 data class TtsAvailabilityResult(val success: Boolean, val message: String? = null)
@@ -188,18 +189,28 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
     }
 
     private fun logDiagnostic(level: String, message: String, data: Map<String, Any?>? = null) {
-        // Log to logcat
+        // Format timestamp as ISO string to match Dart logger format
+        val dateFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSSSS", Locale.US)
+        dateFormat.timeZone = TimeZone.getDefault()
+        val timestamp = dateFormat.format(Date())
+
+        // Log to logcat with data for debugging
+        val logMessage = if (data != null) {
+            "$message | Data: $data"
+        } else {
+            message
+        }
         when (level) {
-            "ERROR" -> Log.e(tag, message)
-            "WARN" -> Log.w(tag, message)
-            else -> Log.d(tag, message)
+            "ERROR" -> Log.e(tag, logMessage)
+            "WARN" -> Log.w(tag, logMessage)
+            else -> Log.d(tag, logMessage)
         }
 
         // Send to Dart for Firestore logging
         val diagnosticData = mutableMapOf<String, Any?>(
             "level" to level,
             "message" to message,
-            "timestamp" to System.currentTimeMillis()
+            "timestamp" to timestamp
         )
         if (data != null) {
             diagnosticData["data"] = data
