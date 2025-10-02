@@ -351,14 +351,108 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
 
     private val firstTimeOnInitListener: TextToSpeech.OnInitListener =
         TextToSpeech.OnInitListener { status ->
-            logDiagnostic("INFO", "TTS initialization callback", mapOf("status" to status))
+            logDiagnostic("INFO", "🚀 TTS INITIALIZATION STARTED", mapOf(
+                "status" to status,
+                "androidVersion" to Build.VERSION.SDK_INT,
+                "androidRelease" to Build.VERSION.RELEASE
+            ))
+
             if (status == TextToSpeech.SUCCESS) {
-                logDiagnostic("INFO", "TTS initialization successful")
+                logDiagnostic("INFO", "✅ TTS initialization successful")
+
+                // Log all available engines
+                try {
+                    val engines = tts!!.engines
+                    val engineNames = engines.map { it.name }
+                    logDiagnostic("INFO", "📦 Available TTS engines", mapOf(
+                        "count" to engines.size,
+                        "engines" to engineNames
+                    ))
+                } catch (e: Exception) {
+                    logDiagnostic("ERROR", "Failed to get engines list", mapOf("error" to e.message))
+                }
+
+                // Log default engine
+                try {
+                    val defaultEngine = tts!!.defaultEngine
+                    logDiagnostic("INFO", "🎯 Default TTS engine", mapOf("engine" to defaultEngine))
+                } catch (e: Exception) {
+                    logDiagnostic("ERROR", "Failed to get default engine", mapOf("error" to e.message))
+                }
+
+                // Log default voice
+                try {
+                    val defaultVoice = tts!!.defaultVoice
+                    if (defaultVoice != null) {
+                        logDiagnostic("INFO", "🎤 Default voice", mapOf(
+                            "name" to defaultVoice.name,
+                            "locale" to defaultVoice.locale.toLanguageTag(),
+                            "quality" to defaultVoice.quality,
+                            "requiresNetwork" to defaultVoice.isNetworkConnectionRequired
+                        ))
+                    } else {
+                        logDiagnostic("WARN", "No default voice available")
+                    }
+                } catch (e: Exception) {
+                    logDiagnostic("ERROR", "Failed to get default voice", mapOf("error" to e.message))
+                }
+
+                // Log all available voices
+                try {
+                    val voices = tts!!.voices
+                    if (voices != null) {
+                        logDiagnostic("INFO", "🎵 Available voices count", mapOf("count" to voices.size))
+
+                        // Group voices by language
+                        val voicesByLanguage = voices.groupBy { it.locale.language }
+                        val languageCounts = voicesByLanguage.mapValues { it.value.size }
+                        logDiagnostic("INFO", "🌍 Voices by language", mapOf("languages" to languageCounts))
+
+                        // Log first few voices as examples
+                        val sampleVoices = voices.take(10).map { voice ->
+                            mapOf(
+                                "name" to voice.name,
+                                "locale" to voice.locale.toLanguageTag(),
+                                "quality" to voice.quality
+                            )
+                        }
+                        logDiagnostic("INFO", "🎵 Sample voices", mapOf("voices" to sampleVoices))
+                    } else {
+                        logDiagnostic("ERROR", "No voices available from TTS engine")
+                    }
+                } catch (e: Exception) {
+                    logDiagnostic("ERROR", "Failed to get voices list", mapOf("error" to e.message))
+                }
+
+                // Log available languages
+                try {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        val availableLanguages = tts!!.availableLanguages
+                        if (availableLanguages != null) {
+                            val languageTags = availableLanguages.map { it.toLanguageTag() }
+                            logDiagnostic("INFO", "🗣️ Available languages", mapOf(
+                                "count" to availableLanguages.size,
+                                "languages" to languageTags.take(20)
+                            ))
+                        }
+                    } else {
+                        logDiagnostic("INFO", "Language enumeration not available on Android < 23")
+                    }
+                } catch (e: Exception) {
+                    logDiagnostic("ERROR", "Failed to get available languages", mapOf("error" to e.message))
+                }
+
                 tts!!.setOnUtteranceProgressListener(utteranceProgressListener)
+
+                // Set up default locale
                 try {
                     val locale: Locale = tts!!.defaultVoice.locale
+                    logDiagnostic("INFO", "Setting default locale", mapOf("locale" to locale.toLanguageTag()))
                     if (isLanguageAvailable(locale)) {
                         tts!!.language = locale
+                        logDiagnostic("INFO", "Default locale set successfully", mapOf("locale" to locale.toLanguageTag()))
+                    } else {
+                        logDiagnostic("WARN", "Default locale not available", mapOf("locale" to locale.toLanguageTag()))
                     }
                 } catch (e: NullPointerException) {
                     logDiagnostic("ERROR", "Failed to get default locale", mapOf("error" to e.message))
@@ -379,10 +473,12 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
                 // Handle pending method calls (sent while TTS was initializing)
                 synchronized(this@FlutterTtsPlugin) {
                     isTtsInitialized = true
+                    logDiagnostic("INFO", "Processing pending method calls", mapOf("count" to pendingMethodCalls.size))
                     for (call in pendingMethodCalls) {
                         call.run()
                     }
                     pendingMethodCalls.clear()
+                    logDiagnostic("INFO", "✅ TTS INITIALIZATION COMPLETE")
                 }
                 invokeMethod("tts.init", isTtsInitialized)
             } else {
@@ -397,9 +493,10 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
                     TextToSpeech.ERROR_SYNTHESIS -> "Speech synthesis error during initialization"
                     else -> "Unknown TTS initialization error (status: $status)"
                 }
-                logDiagnostic("ERROR", "TTS initialization failed", mapOf(
+                logDiagnostic("ERROR", "❌ TTS initialization failed", mapOf(
                     "status" to status,
-                    "error" to errorMessage
+                    "error" to errorMessage,
+                    "androidVersion" to Build.VERSION.SDK_INT
                 ))
                 invokeMethod("tts.error", mapOf(
                     "type" to "initialization_failure",
