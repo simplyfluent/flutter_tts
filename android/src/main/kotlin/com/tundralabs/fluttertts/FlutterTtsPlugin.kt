@@ -43,6 +43,10 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
     private var isPaused: Boolean = false
     private var queueMode: Int = TextToSpeech.QUEUE_FLUSH
 
+    // Buffer diagnostic messages until method channel is ready
+    private val bufferedDiagnostics = ArrayList<Map<String, Any?>>()
+    private var isMethodChannelReady = false
+
     companion object {
         private const val SILENCE_PREFIX = "SIL_"
         private const val SYNTHESIZE_TO_FILE_PREFIX = "STF_"
@@ -54,6 +58,19 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
         methodChannel!!.setMethodCallHandler(this)
         handler = Handler(Looper.getMainLooper())
         bundle = Bundle()
+
+        // Mark channel as ready and flush buffered diagnostics
+        isMethodChannelReady = true
+        synchronized(bufferedDiagnostics) {
+            if (bufferedDiagnostics.isNotEmpty()) {
+                logDiagnostic("INFO", "Method channel ready, flushing ${bufferedDiagnostics.size} buffered diagnostics")
+                bufferedDiagnostics.forEach { diagnostic ->
+                    invokeMethod("tts.diagnostic", diagnostic)
+                }
+                bufferedDiagnostics.clear()
+            }
+        }
+
         tts = TextToSpeech(context, firstTimeOnInitListener, googleTtsEngine)
     }
 
@@ -215,7 +232,16 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
         if (data != null) {
             diagnosticData["data"] = data
         }
-        invokeMethod("tts.diagnostic", diagnosticData)
+
+        // Buffer if method channel not ready, otherwise send immediately
+        synchronized(bufferedDiagnostics) {
+            if (!isMethodChannelReady) {
+                bufferedDiagnostics.add(diagnosticData)
+                Log.d(tag, "Buffered diagnostic (channel not ready): $message [total buffered: ${bufferedDiagnostics.size}]")
+            } else {
+                invokeMethod("tts.diagnostic", diagnosticData)
+            }
+        }
     }
 
     private fun checkTtsAvailability(): TtsAvailabilityResult {
