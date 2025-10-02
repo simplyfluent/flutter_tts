@@ -341,7 +341,12 @@ class FlutterTts {
   ProgressHandler? progressHandler;
   ErrorHandler? errorHandler;
   DetailedErrorHandler? detailedErrorHandler;
-  DiagnosticHandler? diagnosticHandler;
+  DiagnosticHandler? _diagnosticHandler;
+
+  // Buffer diagnostic messages that arrive before handler is set
+  final List<Map<String, dynamic>> _bufferedDiagnostics = [];
+
+  DiagnosticHandler? get diagnosticHandler => _diagnosticHandler;
 
   FlutterTts() {
     _channel.setMethodCallHandler(platformCallHandler);
@@ -626,7 +631,12 @@ class FlutterTts {
   }
 
   void setDiagnosticHandler(DiagnosticHandler handler) {
-    diagnosticHandler = handler;
+    _diagnosticHandler = handler;
+    // Replay buffered diagnostics
+    for (final diagnostic in _bufferedDiagnostics) {
+      handler(diagnostic);
+    }
+    _bufferedDiagnostics.clear();
   }
 
   /// Platform listeners
@@ -711,9 +721,14 @@ class FlutterTts {
         }
         break;
       case "tts.diagnostic":
-        if (diagnosticHandler != null && call.arguments is Map) {
+        if (call.arguments is Map) {
           final diagnosticMap = Map<String, dynamic>.from(call.arguments as Map);
-          diagnosticHandler!(diagnosticMap);
+          if (_diagnosticHandler != null) {
+            _diagnosticHandler!(diagnosticMap);
+          } else {
+            // Buffer messages until handler is set
+            _bufferedDiagnostics.add(diagnosticMap);
+          }
         }
         break;
       default:
