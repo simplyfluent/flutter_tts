@@ -632,11 +632,20 @@ class FlutterTts {
 
   void setDiagnosticHandler(DiagnosticHandler handler) {
     _diagnosticHandler = handler;
+    print('🔧 [flutter_tts] setDiagnosticHandler called - buffered diagnostics count: ${_bufferedDiagnostics.length}');
     // Replay buffered diagnostics
-    for (final diagnostic in _bufferedDiagnostics) {
-      handler(diagnostic);
+    for (int i = 0; i < _bufferedDiagnostics.length; i++) {
+      final diagnostic = _bufferedDiagnostics[i];
+      print('🔧 [flutter_tts] Replaying buffered diagnostic $i: ${diagnostic['message']}');
+      try {
+        handler(diagnostic);
+        print('🔧 [flutter_tts] Successfully replayed diagnostic $i');
+      } catch (e, stack) {
+        print('🔧 [flutter_tts] ERROR replaying diagnostic $i: $e\n$stack');
+      }
     }
     _bufferedDiagnostics.clear();
+    print('🔧 [flutter_tts] Finished replaying buffered diagnostics');
   }
 
   /// Platform listeners
@@ -727,7 +736,9 @@ class FlutterTts {
             _diagnosticHandler!(diagnosticMap);
           } else {
             // Buffer messages until handler is set
+            print('🔧 [flutter_tts] Buffering diagnostic (handler not set): ${diagnosticMap['message']}');
             _bufferedDiagnostics.add(diagnosticMap);
+            print('🔧 [flutter_tts] Total buffered: ${_bufferedDiagnostics.length}');
           }
         }
         break;
