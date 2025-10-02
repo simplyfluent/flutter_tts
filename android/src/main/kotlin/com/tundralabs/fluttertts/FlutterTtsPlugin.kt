@@ -59,17 +59,9 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
         handler = Handler(Looper.getMainLooper())
         bundle = Bundle()
 
-        // Mark channel as ready and flush buffered diagnostics
-        isMethodChannelReady = true
-        synchronized(bufferedDiagnostics) {
-            if (bufferedDiagnostics.isNotEmpty()) {
-                logDiagnostic("INFO", "Method channel ready, flushing ${bufferedDiagnostics.size} buffered diagnostics")
-                bufferedDiagnostics.forEach { diagnostic ->
-                    invokeMethod("tts.diagnostic", diagnostic)
-                }
-                bufferedDiagnostics.clear()
-            }
-        }
+        // Don't mark as ready yet - wait for first method call from Flutter
+        // This ensures Flutter's method call handler is set up
+        Log.d(tag, "Android method channel created, waiting for first Flutter method call to confirm Flutter is ready")
 
         tts = TextToSpeech(context, firstTimeOnInitListener, googleTtsEngine)
     }
@@ -545,6 +537,22 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
         }
 
     override fun onMethodCall(call: MethodCall, result: Result) {
+        // First method call from Flutter - this confirms Flutter is ready to receive messages
+        if (!isMethodChannelReady) {
+            isMethodChannelReady = true
+            synchronized(bufferedDiagnostics) {
+                if (bufferedDiagnostics.isNotEmpty()) {
+                    Log.d(tag, "Flutter confirmed ready via first method call (${call.method}), flushing ${bufferedDiagnostics.size} buffered diagnostics")
+                    bufferedDiagnostics.forEach { diagnostic ->
+                        invokeMethod("tts.diagnostic", diagnostic)
+                    }
+                    bufferedDiagnostics.clear()
+                } else {
+                    Log.d(tag, "Flutter confirmed ready via first method call (${call.method}), no buffered diagnostics")
+                }
+            }
+        }
+
         // If TTS is still loading, handle non-blocking
         if (!isTtsInitialized) {
             when (call.method) {
