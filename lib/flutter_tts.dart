@@ -648,7 +648,12 @@ class FlutterTts {
     print('🔧 [flutter_tts] Finished replaying buffered diagnostics');
 
     // Retrieve and process any diagnostics buffered on the native side
-    _retrieveNativeBufferedDiagnostics();
+    // Use .then() to ensure this async operation actually executes
+    _retrieveNativeBufferedDiagnostics().then((_) {
+      print('🔧 [flutter_tts] Native buffered diagnostics retrieval completed');
+    }).catchError((error, stackTrace) {
+      print('🔧 [flutter_tts] ERROR in native buffered diagnostics retrieval: $error\n$stackTrace');
+    });
   }
 
   Future<void> _retrieveNativeBufferedDiagnostics() async {
