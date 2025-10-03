@@ -646,6 +646,37 @@ class FlutterTts {
     }
     _bufferedDiagnostics.clear();
     print('🔧 [flutter_tts] Finished replaying buffered diagnostics');
+
+    // Retrieve and process any diagnostics buffered on the native side
+    _retrieveNativeBufferedDiagnostics();
+  }
+
+  Future<void> _retrieveNativeBufferedDiagnostics() async {
+    try {
+      print('🔧 [flutter_tts] Retrieving buffered diagnostics from native side');
+      final result = await _channel.invokeMethod('getBufferedDiagnostics');
+
+      if (result is List) {
+        print('🔧 [flutter_tts] Retrieved ${result.length} buffered diagnostics from native side');
+        for (var i = 0; i < result.length; i++) {
+          final diagnostic = result[i];
+          if (diagnostic is Map) {
+            final diagnosticMap = Map<String, dynamic>.from(diagnostic);
+            print('🔧 [flutter_tts] Processing native buffered diagnostic $i: ${diagnosticMap['message']}');
+            if (_diagnosticHandler != null) {
+              try {
+                _diagnosticHandler!(diagnosticMap);
+                print('🔧 [flutter_tts] Successfully processed native buffered diagnostic $i');
+              } catch (e, stack) {
+                print('🔧 [flutter_tts] ERROR processing native buffered diagnostic $i: $e\n$stack');
+              }
+            }
+          }
+        }
+      }
+    } catch (e, stack) {
+      print('🔧 [flutter_tts] ERROR retrieving native buffered diagnostics: $e\n$stack');
+    }
   }
 
   /// Platform listeners

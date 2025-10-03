@@ -537,23 +537,10 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
         }
 
     override fun onMethodCall(call: MethodCall, result: Result) {
-        // First method call from Flutter - this confirms Flutter is ready to receive messages
+        // Mark channel as ready on first method call
         if (!isMethodChannelReady) {
             isMethodChannelReady = true
-            synchronized(bufferedDiagnostics) {
-                if (bufferedDiagnostics.isNotEmpty()) {
-                    Log.d(tag, "Flutter confirmed ready via first method call (${call.method}), flushing ${bufferedDiagnostics.size} buffered diagnostics")
-                    // Send diagnostics directly without posting - we're already on the right thread
-                    bufferedDiagnostics.forEach { diagnostic ->
-                        // Call methodChannel.invokeMethod directly instead of using invokeMethod helper
-                        // to avoid the handler.post wrapper which can cause timing issues
-                        methodChannel?.invokeMethod("tts.diagnostic", diagnostic)
-                    }
-                    bufferedDiagnostics.clear()
-                } else {
-                    Log.d(tag, "Flutter confirmed ready via first method call (${call.method}), no buffered diagnostics")
-                }
-            }
+            Log.d(tag, "Method channel confirmed ready via first method call (${call.method})")
         }
 
         // If TTS is still loading, handle non-blocking
@@ -775,6 +762,15 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
                 val queueMode: String = call.arguments.toString()
                 this.queueMode = queueMode.toInt()
                 result.success(1)
+            }
+
+            "getBufferedDiagnostics" -> {
+                synchronized(bufferedDiagnostics) {
+                    val diagnostics = ArrayList(bufferedDiagnostics)
+                    bufferedDiagnostics.clear()
+                    Log.d(tag, "Returning ${diagnostics.size} buffered diagnostics to Flutter")
+                    result.success(diagnostics)
+                }
             }
 
             else -> result.notImplemented()
