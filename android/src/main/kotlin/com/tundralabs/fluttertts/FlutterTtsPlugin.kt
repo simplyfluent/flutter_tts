@@ -1,6 +1,7 @@
 package com.tundralabs.fluttertts
 
 import android.content.Context
+import android.media.AudioManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -170,6 +171,29 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
             }
 
             override fun onError(utteranceId: String, errorCode: Int) {
+                val errorName = when (errorCode) {
+                    TextToSpeech.ERROR -> "ERROR_GENERIC"
+                    TextToSpeech.ERROR_SYNTHESIS -> "ERROR_SYNTHESIS"
+                    TextToSpeech.ERROR_SERVICE -> "ERROR_SERVICE"
+                    TextToSpeech.ERROR_OUTPUT -> "ERROR_OUTPUT"
+                    TextToSpeech.ERROR_NETWORK -> "ERROR_NETWORK"
+                    TextToSpeech.ERROR_NETWORK_TIMEOUT -> "ERROR_NETWORK_TIMEOUT"
+                    TextToSpeech.ERROR_INVALID_REQUEST -> "ERROR_INVALID_REQUEST"
+                    TextToSpeech.ERROR_NOT_INSTALLED_YET -> "ERROR_NOT_INSTALLED_YET"
+                    else -> "ERROR_UNKNOWN_$errorCode"
+                }
+
+                // Enhanced diagnostic logging
+                logDiagnostic("ERROR", "TTS onError callback", mapOf(
+                    "utteranceId" to utteranceId,
+                    "errorCode" to errorCode,
+                    "errorName" to errorName,
+                    "ttsEngine" to (tts?.defaultEngine ?: "unknown"),
+                    "isSpeaking" to (tts?.isSpeaking ?: false),
+                    "queueMode" to queueMode,
+                    "audioState" to captureAudioState()
+                ))
+
                 if (utteranceId.startsWith(SYNTHESIZE_TO_FILE_PREFIX)) {
                     if (awaitSynthCompletion) {
                         synth = false
@@ -234,6 +258,167 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
                 invokeMethod("tts.diagnostic", diagnosticData)
             }
         }
+    }
+
+    private fun captureAudioState(): Map<String, Any?> {
+        return try {
+            val audioManager = context?.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+            if (audioManager != null) {
+                mapOf(
+                    "mode" to audioManager.mode,
+                    "ringerMode" to audioManager.ringerMode,
+                    "musicStreamVolume" to audioManager.getStreamVolume(AudioManager.STREAM_MUSIC),
+                    "musicStreamMax" to audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC),
+                    "isSpeakerphoneOn" to audioManager.isSpeakerphoneOn,
+                    "isBluetoothScoOn" to audioManager.isBluetoothScoOn,
+                    "isMusicActive" to audioManager.isMusicActive
+                )
+            } else {
+                mapOf("error" to "AudioManager not available")
+            }
+        } catch (e: Exception) {
+            mapOf("error" to "Failed to capture audio state: ${e.message}")
+        }
+    }
+
+    private fun getDiagnosticSnapshot(): Map<String, Any?> {
+        return mapOf(
+            // TTS Engine State
+            "ttsInitialized" to isTtsInitialized,
+            "ttsEngine" to (tts?.defaultEngine ?: null),
+            "isSpeaking" to (tts?.isSpeaking ?: null),
+
+            // Available Resources
+            "engines" to try { tts?.engines?.map { it.name } } catch (e: Exception) { null },
+            "voicesCount" to try { tts?.voices?.size } catch (e: Exception) { null },
+            "defaultVoice" to try { tts?.voice?.name } catch (e: Exception) { null },
+
+            // Current State
+            "queueMode" to queueMode,
+            "speaking" to speaking,
+            "synth" to synth,
+            "isPaused" to isPaused,
+
+            // Audio State
+            "audioState" to captureAudioState(),
+
+            // Recent Activity
+            "utterancesInProgress" to utterances.keys.toList(),
+
+            // System Info
+            "androidSdkInt" to Build.VERSION.SDK_INT,
+            "deviceManufacturer" to Build.MANUFACTURER,
+            "deviceModel" to Build.MODEL,
+            "androidVersion" to Build.VERSION.RELEASE
+        )
+    }
+
+    /**
+     * Run comprehensive diagnostic tests by actually attempting TTS in multiple languages
+     * Returns detailed results for each test including error codes and timing
+     */
+    private fun runDiagnosticTests(testLanguages: List<String>): Map<String, Any> {
+        val results = mutableMapOf<String, Any>()
+        val languageTests = mutableListOf<Map<String, Any?>>()
+
+        Log.d(tag, "🔬 Starting diagnostic tests for ${testLanguages.size} languages")
+
+        for (languageCode in testLanguages) {
+            val testResult = mutableMapOf<String, Any?>()
+            testResult["language"] = languageCode
+            val startTime = System.currentTimeMillis()
+
+            try {
+                val locale = Locale.forLanguageTag(languageCode)
+                testResult["locale"] = locale.toString()
+
+                // Test 1: Check if language is available
+                val isAvailable = tts?.isLanguageAvailable(locale)
+                testResult["isLanguageAvailable"] = isAvailable
+                testResult["isAvailableCode"] = isAvailable?.toString()
+
+                // Test 2: Try to set language
+                val setLanguageResult = try {
+                    tts?.language = locale
+                    "SUCCESS"
+                } catch (e: Exception) {
+                    testResult["setLanguageError"] = e.message
+                    "EXCEPTION: ${e.message}"
+                }
+                testResult["setLanguageResult"] = setLanguageResult
+
+                // Test 3: Get current voice after setting language
+                val voiceAfterSetLanguage = tts?.voice
+                testResult["voiceAfterSetLanguage"] = voiceAfterSetLanguage?.let {
+                    mapOf(
+                        "name" to it.name,
+                        "locale" to it.locale.toLanguageTag(),
+                        "quality" to it.quality
+                    )
+                }
+
+                // Test 4: Get available voices for this language
+                val availableVoices = try {
+                    tts?.voices?.filter { it.locale.language == locale.language }?.size ?: 0
+                } catch (e: Exception) {
+                    testResult["getVoicesError"] = e.message
+                    0
+                }
+                testResult["availableVoicesCount"] = availableVoices
+
+                // Test 5: Try to speak a test phrase (SHORT to avoid delays)
+                val testText = "Test"
+                val speakResult = try {
+                    val bundle = Bundle()
+                    val uuid = "diagnostic-$languageCode"
+                    tts?.speak(testText, TextToSpeech.QUEUE_FLUSH, bundle, uuid)
+                } catch (e: Exception) {
+                    testResult["speakException"] = e.message
+                    TextToSpeech.ERROR
+                }
+
+                testResult["speakResultCode"] = speakResult
+                testResult["speakResult"] = when (speakResult) {
+                    TextToSpeech.SUCCESS -> "SUCCESS"
+                    TextToSpeech.ERROR -> "ERROR_GENERIC"
+                    TextToSpeech.ERROR_SYNTHESIS -> "ERROR_SYNTHESIS"
+                    TextToSpeech.ERROR_SERVICE -> "ERROR_SERVICE"
+                    TextToSpeech.ERROR_OUTPUT -> "ERROR_OUTPUT"
+                    TextToSpeech.ERROR_NETWORK -> "ERROR_NETWORK"
+                    TextToSpeech.ERROR_NETWORK_TIMEOUT -> "ERROR_NETWORK_TIMEOUT"
+                    TextToSpeech.ERROR_INVALID_REQUEST -> "ERROR_INVALID_REQUEST"
+                    TextToSpeech.ERROR_NOT_INSTALLED_YET -> "ERROR_NOT_INSTALLED_YET"
+                    else -> "UNKNOWN_$speakResult"
+                }
+
+                // Stop any speech immediately to avoid delays
+                tts?.stop()
+
+                val duration = System.currentTimeMillis() - startTime
+                testResult["testDurationMs"] = duration
+                testResult["success"] = (speakResult == TextToSpeech.SUCCESS)
+
+                Log.d(tag, "🔬 Test result for $languageCode: speak=${testResult["speakResult"]}, available=$isAvailable, voices=$availableVoices, duration=${duration}ms")
+
+            } catch (e: Exception) {
+                Log.e(tag, "🔬 Test failed for $languageCode: ${e.message}", e)
+                testResult["testException"] = e.message
+                testResult["testExceptionType"] = e.javaClass.simpleName
+                testResult["success"] = false
+            }
+
+            languageTests.add(testResult)
+        }
+
+        results["languageTests"] = languageTests
+        results["totalLanguagesTested"] = testLanguages.size
+        results["successCount"] = languageTests.count { (it["success"] as? Boolean) == true }
+        results["failureCount"] = languageTests.count { (it["success"] as? Boolean) == false }
+        results["audioState"] = captureAudioState()
+
+        Log.d(tag, "🔬 Diagnostic tests complete: ${results["successCount"]}/${testLanguages.size} successful")
+
+        return results
     }
 
     private fun checkTtsAvailability(): TtsAvailabilityResult {
@@ -773,6 +958,19 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
                 }
             }
 
+            "getDiagnosticSnapshot" -> {
+                val snapshot = getDiagnosticSnapshot()
+                Log.d(tag, "Returning diagnostic snapshot to Flutter")
+                result.success(snapshot)
+            }
+
+            "runDiagnosticTests" -> {
+                val testLanguages = call.argument<List<String>>("languages") ?: listOf()
+                Log.d(tag, "Running diagnostic tests for languages: $testLanguages")
+                val testResults = runDiagnosticTests(testLanguages)
+                result.success(testResults)
+            }
+
             else -> result.notImplemented()
         }
     }
@@ -1093,6 +1291,19 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
                         else -> "Unknown TTS speech error (code: $speakResult)"
                     }
                     Log.e(tag, "TTS speak failed: $errorMessage")
+
+                    // Enhanced diagnostic logging
+                    logDiagnostic("ERROR", "speak() returned error immediately", mapOf(
+                        "errorCode" to speakResult,
+                        "errorMessage" to errorMessage,
+                        "text" to text.take(100),
+                        "textLength" to text.length,
+                        "language" to language,
+                        "queueMode" to queueMode,
+                        "ttsEngine" to (tts?.defaultEngine ?: "unknown"),
+                        "audioState" to captureAudioState()
+                    ))
+
                     invokeMethod("tts.error", mapOf(
                         "type" to "speak_failure",
                         "message" to errorMessage,
@@ -1102,10 +1313,27 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
                     ))
                     false
                 } else {
+                    // speak() succeeded - log for correlation with callbacks
+                    logDiagnostic("INFO", "speak() call succeeded", mapOf(
+                        "utteranceId" to uuid,
+                        "textLength" to text.length,
+                        "language" to language
+                    ))
                     true
                 }
             } catch (e: Exception) {
                 Log.e(tag, "Exception during TTS speak: ${e.message}", e)
+
+                // Enhanced diagnostic logging
+                logDiagnostic("ERROR", "speak() threw exception", mapOf(
+                    "exception" to e.javaClass.simpleName,
+                    "message" to (e.message ?: ""),
+                    "text" to text.take(100),
+                    "textLength" to text.length,
+                    "language" to language,
+                    "audioState" to captureAudioState()
+                ))
+
                 invokeMethod("tts.error", mapOf(
                     "type" to "speak_exception",
                     "message" to "Exception during TTS speak: ${e.message}",

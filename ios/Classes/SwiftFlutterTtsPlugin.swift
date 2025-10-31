@@ -235,6 +235,21 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
       self.reinitializeSynthesizers()
       result(1)
 
+    case "getDiagnosticSnapshot":
+      let snapshot = self.getDiagnosticSnapshot()
+      result(snapshot)
+
+    case "runDiagnosticTests":
+      guard let args = call.arguments as? [String: Any],
+            let languages = args["languages"] as? [String] else {
+        result(FlutterError(code: "INVALID_ARGUMENTS",
+                           message: "Languages array required",
+                           details: nil))
+        return
+      }
+      let testResults = self.runDiagnosticTests(languages: languages)
+      result(testResults)
+
     default:
       result(FlutterMethodNotImplemented)
     }
@@ -479,6 +494,159 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
       print("setAudioCategory error:", error)
       result(0)
     }
+  }
+
+  // MARK: - Diagnostics
+  private func captureAudioState() -> [String: Any] {
+    do {
+      let audioSession = AVAudioSession.sharedInstance()
+      var audioState: [String: Any] = [:]
+
+      audioState["category"] = audioSession.category.rawValue
+      audioState["mode"] = audioSession.mode.rawValue
+      audioState["outputVolume"] = audioSession.outputVolume
+      audioState["isOtherAudioPlaying"] = audioSession.isOtherAudioPlaying
+
+      // Get current route information
+      let currentRoute = audioSession.currentRoute
+      let outputs = currentRoute.outputs.map { output in
+        return [
+          "portType": output.portType.rawValue,
+          "portName": output.portName
+        ]
+      }
+      audioState["outputs"] = outputs
+
+      let inputs = currentRoute.inputs.map { input in
+        return [
+          "portType": input.portType.rawValue,
+          "portName": input.portName
+        ]
+      }
+      audioState["inputs"] = inputs
+
+      return audioState
+    } catch {
+      return ["error": "Failed to capture audio state: \(error.localizedDescription)"]
+    }
+  }
+
+  private func getDiagnosticSnapshot() -> [String: Any] {
+    var snapshot: [String: Any] = [:]
+
+    // Audio state
+    snapshot["audioState"] = captureAudioState()
+
+    // Synthesizer states
+    var synthesizerStates: [[String: Any]] = []
+    for (language, synthesizer) in synthesizers {
+      synthesizerStates.append([
+        "language": language,
+        "isSpeaking": synthesizer.isSpeaking,
+        "isPaused": synthesizer.isPaused
+      ])
+    }
+    snapshot["synthesizers"] = synthesizerStates
+
+    // Voice information
+    snapshot["voicesCount"] = AVSpeechSynthesisVoice.speechVoices().count
+    snapshot["languagesCount"] = languages.count
+
+    if let defaultVoice = self.defaultVoice {
+      snapshot["defaultVoice"] = [
+        "name": defaultVoice.name,
+        "language": defaultVoice.language,
+        "identifier": defaultVoice.identifier
+      ]
+    }
+
+    // Configuration
+    snapshot["rate"] = rate
+    snapshot["volume"] = volume
+    snapshot["pitch"] = pitch
+    snapshot["awaitSpeakCompletion"] = awaitSpeakCompletion
+    snapshot["awaitSynthCompletion"] = awaitSynthCompletion
+
+    // System info
+    snapshot["iosVersion"] = UIDevice.current.systemVersion
+    snapshot["deviceModel"] = UIDevice.current.model
+    snapshot["deviceName"] = UIDevice.current.name
+
+    return snapshot
+  }
+
+  private func runDiagnosticTests(languages: [String]) -> [String: Any] {
+    var results: [String: Any] = [:]
+    var languageTests: [[String: Any]] = []
+
+    print("🔬 iOS: Starting diagnostic tests for \(languages.count) languages")
+
+    for languageCode in languages {
+      var testResult: [String: Any] = [:]
+      testResult["language"] = languageCode
+      let startTime = Date()
+
+      // Test 1: Find voices for this language
+      let languageVoices = AVSpeechSynthesisVoice.speechVoices().filter { voice in
+        voice.language.lowercased().starts(with: languageCode.lowercased()) ||
+        voice.language.lowercased() == languageCode.lowercased()
+      }
+      testResult["availableVoicesCount"] = languageVoices.count
+      testResult["isLanguageAvailable"] = !languageVoices.isEmpty ? "AVAILABLE" : "NOT_AVAILABLE"
+
+      // Test 2: Try to speak with this language
+      if let synthesizer = getSynthesizer(for: languageCode) {
+        let utterance = AVSpeechUtterance(string: "Test")
+
+        // Try to set voice for this language
+        if let voice = languageVoices.first {
+          utterance.voice = voice
+          testResult["voiceAfterSetLanguage"] = [
+            "name": voice.name,
+            "locale": voice.language,
+            "identifier": voice.identifier
+          ]
+        } else {
+          testResult["voiceAfterSetLanguage"] = NSNull()
+        }
+
+        utterance.rate = self.rate
+        utterance.volume = self.volume
+        utterance.pitchMultiplier = self.pitch
+
+        // Try to speak (this is always "successful" on iOS unless synthesizer is nil)
+        do {
+          synthesizer.speak(utterance)
+          synthesizer.stopSpeaking(at: .immediate) // Stop immediately
+          testResult["speakResult"] = "SUCCESS"
+          testResult["speakResultCode"] = 0
+          testResult["success"] = true
+        } catch {
+          testResult["speakResult"] = "ERROR"
+          testResult["speakException"] = error.localizedDescription
+          testResult["success"] = false
+        }
+      } else {
+        testResult["speakResult"] = "NO_SYNTHESIZER"
+        testResult["success"] = false
+      }
+
+      let duration = Date().timeIntervalSince(startTime) * 1000
+      testResult["testDurationMs"] = Int(duration)
+
+      print("🔬 iOS test result for \(languageCode): voices=\(languageVoices.count), duration=\(Int(duration))ms")
+      languageTests.append(testResult)
+    }
+
+    results["languageTests"] = languageTests
+    results["totalLanguagesTested"] = languages.count
+    results["successCount"] = languageTests.filter { ($0["success"] as? Bool) == true }.count
+    results["failureCount"] = languageTests.filter { ($0["success"] as? Bool) == false }.count
+    results["audioState"] = captureAudioState()
+
+    print("🔬 iOS diagnostic tests complete: \(results["successCount"] ?? 0)/\(languages.count) successful")
+
+    return results
   }
 
   // MARK: - Language and Voice Queries

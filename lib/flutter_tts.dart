@@ -531,6 +531,40 @@ class FlutterTts {
     return voice;
   }
 
+  /// [Future] which invokes the platform specific method for getDiagnosticSnapshot
+  /// Returns a comprehensive diagnostic snapshot including TTS state, audio state,
+  /// device info, and other debugging information.
+  /// Useful for troubleshooting TTS issues like timeouts or audio routing problems.
+  /// ***Android and iOS supported***
+  Future<Map<String, dynamic>?> getDiagnosticSnapshot() async {
+    try {
+      final snapshot = await _channel.invokeMethod<Map>('getDiagnosticSnapshot');
+      return snapshot?.cast<String, dynamic>();
+    } catch (e) {
+      print('Error getting diagnostic snapshot: $e');
+      return null;
+    }
+  }
+
+  /// [Future] which runs comprehensive diagnostic tests by actually attempting TTS
+  /// in multiple languages and capturing the results.
+  /// Returns detailed test results for each language including error codes, timing,
+  /// language availability, voice information, and actual speak() return values.
+  /// This takes time (a few seconds) as it actually runs TTS tests.
+  /// ***Android supported***
+  Future<Map<String, dynamic>?> runDiagnosticTests(List<String> languages) async {
+    try {
+      final results = await _channel.invokeMethod<Map>(
+        'runDiagnosticTests',
+        {'languages': languages},
+      );
+      return results?.cast<String, dynamic>();
+    } catch (e) {
+      print('Error running diagnostic tests: $e');
+      return null;
+    }
+  }
+
   /// [Future] which invokes the platform specific method for getVoices
   /// Returns a `List` of `Maps` containing a voice name and locale
   /// For iOS specifically, it also includes quality, gender, and identifier
