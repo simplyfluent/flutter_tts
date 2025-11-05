@@ -762,9 +762,29 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
         return
       }
 
-      if let matchedVoice = availableVoices.first(where: {
-        $0.name == requestedName && $0.language == requestedLocale
-      }) {
+      // Try to match by identifier first (stable, non-localized)
+      // Fall back to name + locale matching for backward compatibility
+      var matchedVoice: AVSpeechSynthesisVoice? = nil
+
+      if let requestedIdentifier = voice["identifier"], !requestedIdentifier.isEmpty {
+        // Primary: Match by identifier (most reliable, immune to localization)
+        matchedVoice = availableVoices.first(where: { $0.identifier == requestedIdentifier })
+        if matchedVoice != nil {
+          print("TTS: Matched voice by identifier: \(requestedIdentifier)")
+        }
+      }
+
+      // Fallback: Match by name + locale (for backward compatibility with old saved voices)
+      if matchedVoice == nil {
+        matchedVoice = availableVoices.first(where: {
+          $0.name == requestedName && $0.language == requestedLocale
+        })
+        if matchedVoice != nil {
+          print("TTS: Matched voice by name+locale: \(requestedName) (\(requestedLocale))")
+        }
+      }
+
+      if let matchedVoice = matchedVoice {
         do {
           let voiceLocale = requestedLocale
           let voicePrefix = String(voiceLocale.lowercased().prefix(2)) // Get "fr" from "fr-CA"
