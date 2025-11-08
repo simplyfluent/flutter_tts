@@ -250,6 +250,11 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
       let testResults = self.runDiagnosticTests(languages: languages)
       result(testResults)
 
+    case "getBufferedDiagnostics":
+      // iOS doesn't buffer diagnostics like Android does
+      // Return empty array to maintain API compatibility
+      result([])
+
     default:
       result(FlutterMethodNotImplemented)
     }
