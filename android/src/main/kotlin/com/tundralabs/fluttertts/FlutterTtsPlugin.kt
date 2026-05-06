@@ -26,9 +26,9 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
     private var speakResult: Result? = null
     private var synthResult: Result? = null
     private var awaitSpeakCompletion = false
-    private var speaking = false
+    @Volatile private var speaking = false
     private var awaitSynthCompletion = false
-    private var synth = false
+    @Volatile private var synth = false
     private var context: Context? = null
     private var tts: TextToSpeech? = null
     private val tag = "TTS"
@@ -159,12 +159,12 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
             override fun onError(utteranceId: String) {
                 if (utteranceId.startsWith(SYNTHESIZE_TO_FILE_PREFIX)) {
                     if (awaitSynthCompletion) {
-                        synth = false
+                        synthCompletion(0)
                     }
                     invokeMethod("synth.onError", "Error from TextToSpeech (synth)")
                 } else {
                     if (awaitSpeakCompletion) {
-                        speaking = false
+                        speakCompletion(0)
                     }
                     invokeMethod("speak.onError", "Error from TextToSpeech (speak)")
                 }
@@ -196,12 +196,12 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
 
                 if (utteranceId.startsWith(SYNTHESIZE_TO_FILE_PREFIX)) {
                     if (awaitSynthCompletion) {
-                        synth = false
+                        synthCompletion(0)
                     }
                     invokeMethod("synth.onError", "Error from TextToSpeech (synth) - $errorCode")
                 } else {
                     if (awaitSpeakCompletion) {
-                        speaking = false
+                        speakCompletion(0)
                     }
                     invokeMethod("speak.onError", "Error from TextToSpeech (speak) - $errorCode")
                 }
@@ -783,11 +783,10 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
                 }
 
                 if (speaking) {
-                    // If TTS is set to queue mode, allow the utterance to be queued up rather than discarded
-                    if (queueMode == TextToSpeech.QUEUE_FLUSH) {
-                        result.success(0)
-                        return
-                    }
+                    logDiagnostic("WARN", "speak() called while already speaking", mapOf(
+                        "queueMode" to queueMode,
+                        "textLength" to text.length
+                    ))
                 }
 
                 val speechSuccess = speak(text, language)
